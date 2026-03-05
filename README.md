@@ -251,4 +251,4 @@ observer.register(el, {
 
 ## License
 
-MIT
+MIT License. See [LICENSE](./LICENSE) for details.
