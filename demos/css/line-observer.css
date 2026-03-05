@@ -1,0 +1,1193 @@
+/**
+ * LineObserver Demo Styles
+ *
+ * These styles are for the demo page only.
+ * The LineObserver library itself has no CSS dependencies.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono&display=swap');
+
+/* ==========================================
+   BASE & VARIABLES
+========================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+:root {
+  --color-bg: #050508;
+  --color-surface: #0a0a0f;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-text: #ffffff;
+  --color-text-muted: rgba(255, 255, 255, 0.5);
+  --color-accent: #6366f1;
+  --color-accent-2: #ec4899;
+  --color-accent-3: #14b8a6;
+  --color-accent-4: #f59e0b;
+}
+
+html {
+  scroll-behavior: auto;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ==========================================
+   TRIGGER LINE VISUALIZATION
+========================================== */
+
+.trigger-line {
+  position: fixed;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--color-accent) 20%,
+    var(--color-accent-2) 50%,
+    var(--color-accent-3) 80%,
+    transparent 100%
+  );
+  z-index: 9999;
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+/* ==========================================
+   DEBUG PANEL
+========================================== */
+
+.debug-panel {
+  position: fixed;
+  top: 1rem;
+  left: 1rem;
+  background: rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 1rem;
+  font-size: 0.7rem;
+  font-family: 'Space Mono', monospace;
+  z-index: 10000;
+  min-width: 160px;
+}
+
+.debug-panel__title {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.debug-panel__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.25rem 0;
+}
+
+.debug-panel__label {
+  color: var(--color-text-muted);
+}
+
+.debug-panel__value {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+/* ==========================================
+   HERO SECTION
+========================================== */
+
+.hero {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  background: var(--color-bg);
+}
+
+.hero__bg {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+    radial-gradient(ellipse at 80% 50%, rgba(236, 72, 153, 0.1) 0%, transparent 40%),
+    radial-gradient(ellipse at 20% 80%, rgba(20, 184, 166, 0.1) 0%, transparent 40%);
+}
+
+.hero__content {
+  position: relative;
+  z-index: 1;
+}
+
+.hero__title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(3rem, 10vw, 8rem);
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: -0.03em;
+  background: linear-gradient(135deg, #fff 0%, rgba(255,255,255,0.7) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero__subtitle {
+  font-size: 1.125rem;
+  color: var(--color-text-muted);
+  margin-top: 1rem;
+}
+
+.hero__scroll-hint {
+  position: absolute;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  animation: float 2s ease-in-out infinite;
+}
+
+.hero__scroll-hint svg {
+  width: 24px;
+  height: 24px;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  fill: none;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(8px); }
+}
+
+/* ==========================================
+   SECTION BASE
+========================================== */
+
+.section {
+  position: relative;
+  overflow: clip;
+  background: var(--color-bg);
+}
+
+.section__label {
+  position: absolute;
+  top: 2rem;
+  left: 2rem;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 3px;
+  color: var(--color-text-muted);
+  z-index: 10;
+}
+
+.section__offset-display {
+  position: absolute;
+  top: 2rem;
+  right: 2rem;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--color-accent);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: 10;
+}
+
+.section.is-active .section__offset-display {
+  opacity: 1;
+}
+
+/* ==========================================
+   DEMO 1: CINEMATIC TEXT REVEAL
+========================================== */
+
+.text-reveal {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.text-reveal__container {
+  position: relative;
+  padding: 4rem;
+}
+
+.text-reveal__word {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(4rem, 15vw, 10rem);
+  font-weight: 700;
+  line-height: 0.9;
+  display: block;
+  overflow: hidden;
+}
+
+.text-reveal__word span {
+  display: inline-block;
+  transform: translateY(100%);
+  transition: transform 0.01s linear;
+}
+
+.text-reveal__word:nth-child(2) span {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ==========================================
+   DEMO 2: 3D CARD ROTATION
+========================================== */
+
+.card-rotation {
+  min-height: 150vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  perspective: 1000px;
+  background: linear-gradient(180deg, var(--color-bg) 0%, var(--color-surface) 50%, var(--color-bg) 100%);
+}
+
+.card-rotation__card {
+  width: min(500px, 80vw);
+  aspect-ratio: 4/3;
+  background: linear-gradient(145deg, #1a1a2e 0%, #0f0f1a 100%);
+  border-radius: 24px;
+  border: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transform-style: preserve-3d;
+  will-change: transform;
+  box-shadow:
+    0 25px 50px -12px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+}
+
+.card-rotation__icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1.5rem;
+  transform: translateZ(40px);
+}
+
+.card-rotation__icon svg {
+  width: 40px;
+  height: 40px;
+  stroke: white;
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.card-rotation__title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.75rem;
+  font-weight: 600;
+  margin: 0;
+  transform: translateZ(30px);
+}
+
+.card-rotation__desc {
+  color: var(--color-text-muted);
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  transform: translateZ(20px);
+}
+
+/* ==========================================
+   DEMO 3: MULTI-LAYER PARALLAX
+========================================== */
+
+.multi-parallax {
+  min-height: 250vh;
+  position: relative;
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-bg) 100%);
+}
+
+.multi-parallax__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.multi-parallax__layer {
+  position: absolute;
+  border-radius: 24px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 1rem;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  will-change: transform, opacity;
+  transition: box-shadow 0.3s ease;
+}
+
+.multi-parallax__layer--back {
+  width: min(700px, 85vw);
+  height: 400px;
+  background: linear-gradient(135deg, #1e1e3f 0%, #2d1b4e 100%);
+  font-size: 1.5rem;
+  z-index: 1;
+  opacity: 0.6;
+  transform: translateY(60px) scale(1);
+}
+
+.multi-parallax__layer--mid {
+  width: min(500px, 70vw);
+  height: 300px;
+  background: linear-gradient(135deg, #2d2d5a 0%, #4a2c6a 100%);
+  font-size: 1.75rem;
+  z-index: 2;
+  opacity: 0.7;
+  transform: translateY(100px) scale(1);
+}
+
+.multi-parallax__layer--front {
+  width: min(300px, 55vw);
+  height: 200px;
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-2) 100%);
+  font-size: 2rem;
+  z-index: 3;
+  transform: translateY(140px) scale(1);
+}
+
+.multi-parallax__layer.is-active {
+  box-shadow: 0 0 60px rgba(99, 102, 241, 0.3);
+}
+
+.multi-parallax__indicator {
+  position: absolute;
+  top: 5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 1rem;
+  z-index: 10;
+}
+
+.multi-parallax__dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  transition: all 0.3s ease;
+}
+
+.multi-parallax__dot--back.is-active {
+  background: #6366f1;
+  box-shadow: 0 0 15px #6366f1;
+}
+
+.multi-parallax__dot--mid.is-active {
+  background: #a855f7;
+  box-shadow: 0 0 15px #a855f7;
+}
+
+.multi-parallax__dot--front.is-active {
+  background: #ec4899;
+  box-shadow: 0 0 15px #ec4899;
+}
+
+/* ==========================================
+   DEMO 4: NUMBER COUNTER
+========================================== */
+
+.number-counter {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+}
+
+.number-counter__container {
+  display: flex;
+  gap: 4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.number-counter__item {
+  text-align: center;
+}
+
+.number-counter__value {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(4rem, 12vw, 8rem);
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+}
+
+.number-counter__label {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-top: 0.5rem;
+}
+
+/* ==========================================
+   DEMO 5: HORIZONTAL GALLERY
+========================================== */
+
+.horizontal-gallery {
+  height: 400vh;
+  position: relative;
+  background: var(--color-surface);
+}
+
+.horizontal-gallery__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+}
+
+.horizontal-gallery__track {
+  display: flex;
+  gap: 2rem;
+  padding: 0 calc(50vw - 150px);
+  will-change: transform;
+}
+
+.horizontal-gallery__item {
+  flex-shrink: 0;
+  width: 300px;
+  height: 400px;
+  border-radius: 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+  position: relative;
+}
+
+.horizontal-gallery__item-bg {
+  position: absolute;
+  inset: 0;
+  opacity: 0.6;
+}
+
+.horizontal-gallery__item:nth-child(1) .horizontal-gallery__item-bg {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+.horizontal-gallery__item:nth-child(2) .horizontal-gallery__item-bg {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+
+.horizontal-gallery__item:nth-child(3) .horizontal-gallery__item-bg {
+  background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+}
+
+.horizontal-gallery__item:nth-child(4) .horizontal-gallery__item-bg {
+  background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);
+}
+
+.horizontal-gallery__item:nth-child(5) .horizontal-gallery__item-bg {
+  background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+}
+
+.horizontal-gallery__item:nth-child(6) .horizontal-gallery__item-bg {
+  background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+}
+
+.horizontal-gallery__item-content {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 1.5rem;
+  background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, transparent 100%);
+}
+
+.horizontal-gallery__item-title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0;
+}
+
+.horizontal-gallery__item-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-top: 0.25rem;
+}
+
+/* ==========================================
+   DEMO 6: MORPHING BLOB
+========================================== */
+
+.morphing-blob {
+  min-height: 120vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+  position: relative;
+}
+
+.morphing-blob__svg {
+  width: min(500px, 80vw);
+  height: min(500px, 80vw);
+}
+
+.morphing-blob__path {
+  fill: url(#blob-gradient);
+  transform-origin: center;
+  will-change: d;
+}
+
+.morphing-blob__text {
+  position: absolute;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(1.5rem, 4vw, 2.5rem);
+  font-weight: 600;
+  text-align: center;
+  pointer-events: none;
+}
+
+/* ==========================================
+   DEMO 7: TEXT SCRAMBLE
+========================================== */
+
+.text-scramble {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, var(--color-bg) 0%, var(--color-surface) 100%);
+}
+
+.text-scramble__text {
+  font-family: 'Space Mono', monospace;
+  font-size: clamp(1.5rem, 5vw, 3rem);
+  text-align: center;
+  padding: 2rem;
+  color: var(--color-accent-3);
+}
+
+/* ==========================================
+   DEMO 8: STAGGERED LINES
+========================================== */
+
+.staggered-lines {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+}
+
+.staggered-lines__container {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 2rem;
+}
+
+.staggered-lines__line {
+  height: 4px;
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2), var(--color-accent-3));
+  border-radius: 2px;
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 0.01s linear;
+}
+
+.staggered-lines__line:nth-child(1) { width: 300px; }
+.staggered-lines__line:nth-child(2) { width: 450px; }
+.staggered-lines__line:nth-child(3) { width: 250px; }
+.staggered-lines__line:nth-child(4) { width: 500px; }
+.staggered-lines__line:nth-child(5) { width: 350px; }
+.staggered-lines__line:nth-child(6) { width: 200px; }
+.staggered-lines__line:nth-child(7) { width: 400px; }
+
+@media (max-width: 600px) {
+  .staggered-lines__line {
+    width: 80vw !important;
+  }
+}
+
+/* ==========================================
+   DEMO 9: SPLIT SCREEN WIPE
+========================================== */
+
+.split-wipe {
+  min-height: 120vh;
+  position: relative;
+  background: var(--color-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.split-wipe__container {
+  width: min(900px, 90vw);
+  height: 500px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+}
+
+.split-wipe__side {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 2rem;
+  font-weight: 600;
+}
+
+.split-wipe__side--left {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  clip-path: inset(0 100% 0 0);
+  z-index: 2;
+}
+
+.split-wipe__side--right {
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-2) 100%);
+  z-index: 1;
+}
+
+/* ==========================================
+   DEMO 10: SCALE ZOOM
+========================================== */
+
+.scale-zoom {
+  height: 200vh;
+  position: relative;
+  background: var(--color-bg);
+}
+
+.scale-zoom__sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.scale-zoom__circle {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  will-change: transform;
+}
+
+.scale-zoom__text {
+  position: absolute;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(1.5rem, 4vw, 3rem);
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  text-align: center;
+  max-width: 80%;
+}
+
+.scale-zoom.is-active .scale-zoom__text {
+  opacity: 1;
+}
+
+/* ==========================================
+   DEMO 11: ROTATING CUBE
+========================================== */
+
+.rotating-cube {
+  min-height: 150vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  perspective: 1000px;
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-bg) 100%);
+}
+
+.rotating-cube__scene {
+  width: 200px;
+  height: 200px;
+  position: relative;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.rotating-cube__face {
+  position: absolute;
+  width: 200px;
+  height: 200px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  backface-visibility: visible;
+}
+
+.rotating-cube__face--front {
+  background: rgba(99, 102, 241, 0.3);
+  transform: translateZ(100px);
+}
+
+.rotating-cube__face--back {
+  background: rgba(236, 72, 153, 0.3);
+  transform: rotateY(180deg) translateZ(100px);
+}
+
+.rotating-cube__face--right {
+  background: rgba(20, 184, 166, 0.3);
+  transform: rotateY(90deg) translateZ(100px);
+}
+
+.rotating-cube__face--left {
+  background: rgba(245, 158, 11, 0.3);
+  transform: rotateY(-90deg) translateZ(100px);
+}
+
+.rotating-cube__face--top {
+  background: rgba(139, 92, 246, 0.3);
+  transform: rotateX(90deg) translateZ(100px);
+}
+
+.rotating-cube__face--bottom {
+  background: rgba(244, 63, 94, 0.3);
+  transform: rotateX(-90deg) translateZ(100px);
+}
+
+/* ==========================================
+   DEMO 12: CLIP PATH REVEAL
+========================================== */
+
+.clip-reveal {
+  min-height: 100vh;
+  position: relative;
+  background: var(--color-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clip-reveal__image {
+  width: min(800px, 90vw);
+  aspect-ratio: 16/9;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  border-radius: 16px;
+  position: relative;
+  overflow: hidden;
+}
+
+.clip-reveal__overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-2) 100%);
+  clip-path: circle(0% at 50% 50%);
+  will-change: clip-path;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.clip-reveal__overlay-text {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 700;
+  color: white;
+}
+
+.clip-reveal__base-content {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-muted);
+}
+
+/* ==========================================
+   DEMO 13: CSS-ONLY ANIMATION
+========================================== */
+
+.css-only {
+  min-height: 150vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, var(--color-bg) 0%, var(--color-surface) 100%);
+}
+
+.css-only__container {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.css-only__box {
+  width: 150px;
+  height: 150px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 1rem;
+  will-change: transform;
+}
+
+/* These animations are driven purely by --scroll-offset CSS custom property */
+.css-only__box--1 {
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  /* Rotate based on scroll offset */
+  transform: rotate(calc(var(--scroll-offset, 0) * 0.5deg));
+}
+
+.css-only__box--2 {
+  background: linear-gradient(135deg, var(--color-accent-2), var(--color-accent-3));
+  /* Scale based on scroll offset */
+  transform: scale(calc(1 + var(--scroll-offset, 0) * 0.001));
+}
+
+.css-only__box--3 {
+  background: linear-gradient(135deg, var(--color-accent-3), var(--color-accent-4));
+  /* Translate based on scroll offset */
+  transform: translateY(calc(var(--scroll-offset, 0) * -0.2px));
+}
+
+.css-only__note {
+  margin-top: 2rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-align: center;
+  max-width: 400px;
+}
+
+/* ==========================================
+   DEMO 14: DIRECTION FILTERING
+========================================== */
+
+.direction-filter {
+  min-height: 150vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+}
+
+.direction-filter__container {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.direction-filter__card {
+  width: 180px;
+  padding: 2rem 1.5rem;
+  border-radius: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  text-align: center;
+  transition: all 0.3s ease;
+}
+
+.direction-filter__card.is-active {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 30px rgba(99, 102, 241, 0.3);
+}
+
+.direction-filter__icon {
+  font-size: 2.5rem;
+  margin-bottom: 1rem;
+  opacity: 0.6;
+}
+
+.direction-filter__card.is-active .direction-filter__icon {
+  opacity: 1;
+}
+
+.direction-filter__card--below .direction-filter__icon {
+  color: var(--color-accent);
+}
+
+.direction-filter__card--both .direction-filter__icon {
+  color: var(--color-accent-2);
+}
+
+.direction-filter__card--above .direction-filter__icon {
+  color: var(--color-accent-3);
+}
+
+.direction-filter__label {
+  display: block;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+
+.direction-filter__status {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  font-family: 'Space Mono', monospace;
+}
+
+.direction-filter__card.is-active .direction-filter__status {
+  color: var(--color-accent);
+}
+
+.direction-filter__hint {
+  margin-top: 2rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* ==========================================
+   DEMO 15: PROGRAMMATIC UNREGISTER
+========================================== */
+
+.unregister-demo {
+  min-height: 150vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-bg) 100%);
+}
+
+.unregister-demo__container {
+  display: flex;
+  gap: 2rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.unregister-demo__item {
+  width: 200px;
+  padding: 1.5rem;
+  border-radius: 16px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  text-align: center;
+  position: relative;
+  overflow: hidden;
+  transition: opacity 0.3s ease;
+}
+
+.unregister-demo__item.is-active {
+  border-color: var(--color-accent);
+}
+
+.unregister-demo__item.is-unregistered {
+  opacity: 0.4;
+}
+
+.unregister-demo__number {
+  display: block;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 3rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--color-accent), var(--color-accent-2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 1rem;
+}
+
+.unregister-demo__progress {
+  height: 4px;
+  background: linear-gradient(90deg, var(--color-accent), var(--color-accent-2));
+  border-radius: 2px;
+  transform-origin: left center;
+  transform: scaleX(0);
+  margin-bottom: 1rem;
+}
+
+.unregister-demo__btn {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: 'Space Mono', monospace;
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.unregister-demo__btn:hover:not(:disabled) {
+  background: var(--color-accent);
+}
+
+.unregister-demo__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.unregister-demo__note {
+  margin-top: 2rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* ==========================================
+   DEMO 16: MULTIPLE OBSERVER INSTANCES
+========================================== */
+
+.multi-instance {
+  min-height: 150vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--color-bg);
+}
+
+.multi-instance__container {
+  display: flex;
+  gap: 4rem;
+  flex-wrap: wrap;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.multi-instance__column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.multi-instance__trigger-label {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.multi-instance__box {
+  width: 200px;
+  height: 200px;
+  border-radius: 16px;
+  border: 2px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  transition: border-color 0.1s linear, box-shadow 0.3s ease;
+}
+
+.multi-instance__box--a {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0.05) 100%);
+}
+
+.multi-instance__box--b {
+  background: linear-gradient(135deg, rgba(236, 72, 153, 0.15) 0%, rgba(236, 72, 153, 0.05) 100%);
+}
+
+.multi-instance__box.is-active {
+  box-shadow: 0 0 30px rgba(99, 102, 241, 0.3);
+}
+
+.multi-instance__text {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600;
+  font-size: 1.25rem;
+}
+
+.multi-instance__status {
+  font-family: 'Space Mono', monospace;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.multi-instance__box.is-active .multi-instance__status {
+  color: var(--color-accent);
+}
+
+.multi-instance__note {
+  margin-top: 2rem;
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* ==========================================
+   FOOTER
+========================================== */
+
+.footer {
+  min-height: 50vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+}
+
+.footer__content {
+  padding: 2rem;
+}
+
+.footer__title {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: var(--color-text);
+  margin: 0 0 0.5rem 0;
+}

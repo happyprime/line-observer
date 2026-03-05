@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LineObserver — Scroll-Triggered Animations</title>
+  <link rel="stylesheet" href="css/line-observer.css">
+</head>
+<body>
+  <!-- Trigger line visualization (for demo purposes) -->
+  <div class="trigger-line" style="top: 40vh;"></div>
+
+  <!-- Debug panel -->
+  <div class="debug-panel">
+    <h3 class="debug-panel__title">LineObserver</h3>
+    <div class="debug-panel__row">
+      <span class="debug-panel__label">Active</span>
+      <span class="debug-panel__value" id="debug-active">0</span>
+    </div>
+    <div class="debug-panel__row">
+      <span class="debug-panel__label">RAF</span>
+      <span class="debug-panel__value" id="debug-raf">Off</span>
+    </div>
+    <div class="debug-panel__row">
+      <span class="debug-panel__label">Direction</span>
+      <span class="debug-panel__value" id="debug-direction">—</span>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="hero__bg"></div>
+    <div class="hero__content">
+      <h1 class="hero__title">LineObserver</h1>
+      <p class="hero__subtitle">Scroll-triggered animations with surgical precision</p>
+    </div>
+    <div class="hero__scroll-hint">
+      <span>Scroll to explore</span>
+      <svg viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+    </div>
+  </section>
+
+  <!-- DEMO 1: Text Reveal -->
+  <section class="section text-reveal" data-demo="text-reveal">
+    <span class="section__label">01 / Text Reveal</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="text-reveal__container">
+      <div class="text-reveal__word"><span>Scroll</span></div>
+      <div class="text-reveal__word"><span>Driven</span></div>
+      <div class="text-reveal__word"><span>Motion</span></div>
+    </div>
+  </section>
+
+  <!-- DEMO 2: 3D Card -->
+  <section class="section card-rotation" data-demo="card-rotation">
+    <span class="section__label">02 / 3D Transform</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="card-rotation__card">
+      <div class="card-rotation__icon">
+        <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+      </div>
+      <h3 class="card-rotation__title">Perspective Shift</h3>
+      <p class="card-rotation__desc">Rotating through 3D space</p>
+    </div>
+  </section>
+
+  <!-- DEMO 3: Multi-Layer Parallax (3 ACTIVE AT ONCE!) -->
+  <section class="section multi-parallax" data-demo="multi-parallax">
+    <span class="section__label">03 / Multi-Layer (3 Active!)</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="multi-parallax__sticky">
+      <div class="multi-parallax__indicator">
+        <div class="multi-parallax__dot multi-parallax__dot--back" data-layer="back"></div>
+        <div class="multi-parallax__dot multi-parallax__dot--mid" data-layer="mid"></div>
+        <div class="multi-parallax__dot multi-parallax__dot--front" data-layer="front"></div>
+      </div>
+      <div class="multi-parallax__layer multi-parallax__layer--back" data-layer-element="back">
+        Back Layer
+      </div>
+      <div class="multi-parallax__layer multi-parallax__layer--mid" data-layer-element="mid">
+        Middle Layer
+      </div>
+      <div class="multi-parallax__layer multi-parallax__layer--front" data-layer-element="front">
+        Front Layer
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO 4: Number Counter -->
+  <section class="section number-counter" data-demo="number-counter">
+    <span class="section__label">04 / Counter</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="number-counter__container">
+      <div class="number-counter__item">
+        <div class="number-counter__value" data-target="100" data-suffix="%">0%</div>
+        <div class="number-counter__label">Progress</div>
+      </div>
+      <div class="number-counter__item">
+        <div class="number-counter__value" data-target="2847" data-prefix="">0</div>
+        <div class="number-counter__label">Users</div>
+      </div>
+      <div class="number-counter__item">
+        <div class="number-counter__value" data-target="99.9" data-suffix="%" data-decimals="1">0%</div>
+        <div class="number-counter__label">Uptime</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO 5: Horizontal Gallery -->
+  <section class="section horizontal-gallery" data-demo="horizontal-gallery">
+    <span class="section__label">05 / Horizontal Scroll</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="horizontal-gallery__sticky">
+      <div class="horizontal-gallery__track">
+        <div class="horizontal-gallery__item">
+          <div class="horizontal-gallery__item-bg"></div>
+          <div class="horizontal-gallery__item-content">
+            <h4 class="horizontal-gallery__item-title">Project Alpha</h4>
+            <p class="horizontal-gallery__item-desc">Brand Identity</p>
+          </div>
+        </div>
+        <div class="horizontal-gallery__item">
+          <div class="horizontal-gallery__item-bg"></div>
+          <div class="horizontal-gallery__item-content">
+            <h4 class="horizontal-gallery__item-title">Project Beta</h4>
+            <p class="horizontal-gallery__item-desc">Web Design</p>
+          </div>
+        </div>
+        <div class="horizontal-gallery__item">
+          <div class="horizontal-gallery__item-bg"></div>
+          <div class="horizontal-gallery__item-content">
+            <h4 class="horizontal-gallery__item-title">Project Gamma</h4>
+            <p class="horizontal-gallery__item-desc">Mobile App</p>
+          </div>
+        </div>
+        <div class="horizontal-gallery__item">
+          <div class="horizontal-gallery__item-bg"></div>
+          <div class="horizontal-gallery__item-content">
+            <h4 class="horizontal-gallery__item-title">Project Delta</h4>
+            <p class="horizontal-gallery__item-desc">Motion Design</p>
+          </div>
+        </div>
+        <div class="horizontal-gallery__item">
+          <div class="horizontal-gallery__item-bg"></div>
+          <div class="horizontal-gallery__item-content">
+            <h4 class="horizontal-gallery__item-title">Project Epsilon</h4>
+            <p class="horizontal-gallery__item-desc">3D Visualization</p>
+          </div>
+        </div>
+        <div class="horizontal-gallery__item">
+          <div class="horizontal-gallery__item-bg"></div>
+          <div class="horizontal-gallery__item-content">
+            <h4 class="horizontal-gallery__item-title">Project Zeta</h4>
+            <p class="horizontal-gallery__item-desc">Interactive</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO 6: Morphing Blob -->
+  <section class="section morphing-blob" data-demo="morphing-blob">
+    <span class="section__label">06 / Morphing Shape</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <svg class="morphing-blob__svg" viewBox="0 0 200 200">
+      <defs>
+        <linearGradient id="blob-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" style="stop-color:#6366f1"/>
+          <stop offset="50%" style="stop-color:#ec4899"/>
+          <stop offset="100%" style="stop-color:#14b8a6"/>
+        </linearGradient>
+      </defs>
+      <path class="morphing-blob__path" d="M100,20 C140,20 180,60 180,100 C180,140 140,180 100,180 C60,180 20,140 20,100 C20,60 60,20 100,20 Z"/>
+    </svg>
+    <span class="morphing-blob__text">Organic Motion</span>
+  </section>
+
+  <!-- DEMO 7: Text Scramble -->
+  <section class="section text-scramble" data-demo="text-scramble">
+    <span class="section__label">07 / Text Scramble</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="text-scramble__text" data-text="The future is scroll-driven">████████████████████████████</div>
+  </section>
+
+  <!-- DEMO 8: Staggered Lines -->
+  <section class="section staggered-lines" data-demo="staggered-lines">
+    <span class="section__label">08 / Staggered Animation</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="staggered-lines__container">
+      <div class="staggered-lines__line"></div>
+      <div class="staggered-lines__line"></div>
+      <div class="staggered-lines__line"></div>
+      <div class="staggered-lines__line"></div>
+      <div class="staggered-lines__line"></div>
+      <div class="staggered-lines__line"></div>
+      <div class="staggered-lines__line"></div>
+    </div>
+  </section>
+
+  <!-- DEMO 9: Split Screen Wipe -->
+  <section class="section split-wipe" data-demo="split-wipe">
+    <span class="section__label">09 / Split Wipe</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="split-wipe__container">
+      <div class="split-wipe__side split-wipe__side--right">Before</div>
+      <div class="split-wipe__side split-wipe__side--left">After</div>
+    </div>
+  </section>
+
+  <!-- DEMO 10: Scale Zoom -->
+  <section class="section scale-zoom" data-demo="scale-zoom">
+    <span class="section__label">10 / Scale Transform</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="scale-zoom__sticky">
+      <div class="scale-zoom__circle"></div>
+      <div class="scale-zoom__text">Expanding<br>Possibilities</div>
+    </div>
+  </section>
+
+  <!-- DEMO 11: Rotating Cube -->
+  <section class="section rotating-cube" data-demo="rotating-cube">
+    <span class="section__label">11 / 3D Cube</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="rotating-cube__scene">
+      <div class="rotating-cube__face rotating-cube__face--front">Front</div>
+      <div class="rotating-cube__face rotating-cube__face--back">Back</div>
+      <div class="rotating-cube__face rotating-cube__face--right">Right</div>
+      <div class="rotating-cube__face rotating-cube__face--left">Left</div>
+      <div class="rotating-cube__face rotating-cube__face--top">Top</div>
+      <div class="rotating-cube__face rotating-cube__face--bottom">Bottom</div>
+    </div>
+  </section>
+
+  <!-- DEMO 12: Clip Path Reveal -->
+  <section class="section clip-reveal" data-demo="clip-reveal">
+    <span class="section__label">12 / Clip Path</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="clip-reveal__image">
+      <div class="clip-reveal__base-content">
+        <span>Scroll to reveal</span>
+      </div>
+      <div class="clip-reveal__overlay">
+        <span class="clip-reveal__overlay-text">Revealed!</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO 13: CSS-Only Animation (uses --scroll-offset) -->
+  <section class="section css-only" data-demo="css-only">
+    <span class="section__label">13 / CSS-Only (No JS Handler)</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="css-only__container">
+      <div class="css-only__box css-only__box--1">Rotate</div>
+      <div class="css-only__box css-only__box--2">Scale</div>
+      <div class="css-only__box css-only__box--3">Translate</div>
+    </div>
+    <p class="css-only__note">These boxes animate using only CSS and the --scroll-offset property</p>
+  </section>
+
+  <!-- DEMO 14: Direction Filtering -->
+  <!-- Cards are stacked vertically with enough spacing to each cross the trigger line independently -->
+  <section class="section direction-filter" data-demo="direction-filter">
+    <span class="section__label">14 / Direction Filtering</span>
+    <div class="direction-filter__container">
+      <div class="direction-filter__card direction-filter__card--below" data-activate-from="below">
+        <div class="direction-filter__icon">&#8593;</div>
+        <span class="direction-filter__label">From Below</span>
+        <span class="direction-filter__status">Waiting...</span>
+      </div>
+      <div class="direction-filter__card direction-filter__card--both" data-activate-from="both">
+        <div class="direction-filter__icon">&#8597;</div>
+        <span class="direction-filter__label">Both Directions</span>
+        <span class="direction-filter__status">Waiting...</span>
+      </div>
+      <div class="direction-filter__card direction-filter__card--above" data-activate-from="above">
+        <div class="direction-filter__icon">&#8595;</div>
+        <span class="direction-filter__label">From Above</span>
+        <span class="direction-filter__status">Waiting...</span>
+      </div>
+    </div>
+    <p class="direction-filter__hint">Scroll down then back up to see the difference</p>
+  </section>
+
+  <!-- DEMO 15: Programmatic Unregister -->
+  <section class="section unregister-demo" data-demo="unregister-demo">
+    <span class="section__label">15 / Programmatic Unregister</span>
+    <span class="section__offset-display"><span data-offset>0</span>px</span>
+    <div class="unregister-demo__container">
+      <div class="unregister-demo__item" data-item="1">
+        <span class="unregister-demo__number">1</span>
+        <div class="unregister-demo__progress"></div>
+        <button class="unregister-demo__btn">Unregister</button>
+      </div>
+      <div class="unregister-demo__item" data-item="2">
+        <span class="unregister-demo__number">2</span>
+        <div class="unregister-demo__progress"></div>
+        <button class="unregister-demo__btn">Unregister</button>
+      </div>
+      <div class="unregister-demo__item" data-item="3">
+        <span class="unregister-demo__number">3</span>
+        <div class="unregister-demo__progress"></div>
+        <button class="unregister-demo__btn">Unregister</button>
+      </div>
+    </div>
+    <p class="unregister-demo__note">Click "Unregister" to remove an element from observation</p>
+  </section>
+
+  <!-- DEMO 16: Multiple Observer Instances -->
+  <section class="section multi-instance" data-demo="multi-instance">
+    <span class="section__label">16 / Multiple Instances</span>
+    <div class="multi-instance__container">
+      <div class="multi-instance__column">
+        <div class="multi-instance__trigger-label">Trigger: 25vh</div>
+        <div class="multi-instance__box multi-instance__box--a" data-instance="a">
+          <span class="multi-instance__text">Observer A</span>
+          <span class="multi-instance__status">Waiting...</span>
+        </div>
+      </div>
+      <div class="multi-instance__column">
+        <div class="multi-instance__trigger-label">Trigger: 75vh</div>
+        <div class="multi-instance__box multi-instance__box--b" data-instance="b">
+          <span class="multi-instance__text">Observer B</span>
+          <span class="multi-instance__status">Waiting...</span>
+        </div>
+      </div>
+    </div>
+    <p class="multi-instance__note">Two independent LineObserver instances with different trigger lines</p>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div class="footer__content">
+      <h2 class="footer__title">That's all, folks!</h2>
+      <p>Scroll back up to reverse the animations</p>
+    </div>
+  </footer>
+
+  <!-- LineObserver Library -->
+  <script src="../build/line-observer.js"></script>
+
+  <!-- Demo Initialization -->
+  <script>
+    /**
+     * Demo-specific code
+     * This shows how to use LineObserver with various animation patterns
+     */
+
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+
+    const clamp = (val, min, max) => Math.min(max, Math.max(min, val));
+
+    const mapRange = (val, inMin, inMax, outMin, outMax) => {
+      return outMin + (outMax - outMin) * ((val - inMin) / (inMax - inMin));
+    };
+
+    const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+    const updateOffset = (el, offset) => {
+      const display = el.querySelector('[data-offset]');
+      if (display) display.textContent = Math.round(offset);
+    };
+
+    // ============================================
+    // BLOB PATH GENERATOR
+    // ============================================
+
+    function generateBlobPath(progress, time) {
+      const points = 8;
+      const radius = 80;
+      const variance = 20 + progress * 30;
+
+      let path = '';
+      const angleStep = (Math.PI * 2) / points;
+
+      for (let i = 0; i <= points; i++) {
+        const angle = i * angleStep;
+        const wave = Math.sin(angle * 3 + time * 2 + progress * 5) * variance;
+        const r = radius + wave;
+        const x = 100 + Math.cos(angle) * r;
+        const y = 100 + Math.sin(angle) * r;
+
+        if (i === 0) {
+          path += `M${x},${y}`;
+        } else {
+          const prevAngle = (i - 1) * angleStep;
+          const midAngle = prevAngle + angleStep / 2;
+          const midWave = Math.sin(midAngle * 3 + time * 2 + progress * 5) * variance;
+          const midR = radius + midWave;
+          const midX = 100 + Math.cos(midAngle) * midR * 1.1;
+          const midY = 100 + Math.sin(midAngle) * midR * 1.1;
+          path += ` Q${midX},${midY} ${x},${y}`;
+        }
+      }
+
+      return path + ' Z';
+    }
+
+    // ============================================
+    // TEXT SCRAMBLE
+    // ============================================
+
+    const scrambleChars = '!<>-_\\/[]{}—=+*^?#________';
+
+    // Simple seeded random for deterministic scramble characters
+    function seededRandom(seed) {
+      const x = Math.sin(seed * 9999) * 10000;
+      return x - Math.floor(x);
+    }
+
+    function scrambleText(target, progress) {
+      const chars = scrambleChars;
+      const revealedCount = Math.floor(progress * target.length);
+      // Use progress to determine which "frame" of scramble we're on
+      const scrambleFrame = Math.floor(progress * 20);
+
+      let result = '';
+      for (let i = 0; i < target.length; i++) {
+        if (i < revealedCount) {
+          result += target[i];
+        } else if (target[i] === ' ') {
+          result += ' ';
+        } else {
+          // Deterministic char based on position and scramble frame
+          const seed = i * 100 + scrambleFrame;
+          const charIndex = Math.floor(seededRandom(seed) * chars.length);
+          result += chars[charIndex];
+        }
+      }
+      return result;
+    }
+
+    // ============================================
+    // DEBUG PANEL UPDATER
+    // ============================================
+
+    function updateDebugPanel(observer) {
+      const activeEl = document.getElementById('debug-active');
+      const rafEl = document.getElementById('debug-raf');
+      const dirEl = document.getElementById('debug-direction');
+
+      function update() {
+        if (activeEl) activeEl.textContent = observer.getActiveCount();
+        if (rafEl) rafEl.textContent = observer.isActive() ? 'On' : 'Off';
+        if (dirEl) dirEl.textContent = observer.getDirection() === 'down' ? '↓' : '↑';
+
+        requestAnimationFrame(update);
+      }
+
+      update();
+    }
+
+    // ============================================
+    // INITIALIZE
+    // ============================================
+
+    document.addEventListener('DOMContentLoaded', () => {
+      // Create observer instance with global defaults
+      const observer = new LineObserver({
+        triggerLine: '40vh',
+        activeClass: 'is-active',
+        activateFrom: 'both',
+      });
+
+      // Start debug panel updates
+      updateDebugPanel(observer);
+
+      // DEMO 1: Text Reveal
+      const textReveal = document.querySelector('[data-demo="text-reveal"]');
+      observer.register(textReveal, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / (instance.elementHeight * 0.6), 0, 1);
+          const words = el.querySelectorAll('.text-reveal__word span');
+
+          words.forEach((word, i) => {
+            const wordStart = i * 0.2;
+            const wordProgress = clamp((progress - wordStart) / 0.3, 0, 1);
+            const eased = easeOutCubic(wordProgress);
+            word.style.transform = `translateY(${100 - (eased * 100)}%)`;
+          });
+        },
+        onDeactivate: (el) => {
+          const words = el.querySelectorAll('.text-reveal__word span');
+          words.forEach(word => word.style.transform = 'translateY(100%)');
+        }
+      });
+
+      // DEMO 2: 3D Card Rotation
+      const cardRotation = document.querySelector('[data-demo="card-rotation"]');
+      observer.register(cardRotation, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / instance.elementHeight, 0, 1);
+          const card = el.querySelector('.card-rotation__card');
+
+          const rotateY = mapRange(progress, 0, 1, -25, 25);
+          const rotateX = Math.sin(progress * Math.PI) * 10;
+
+          card.style.transform = `rotateY(${rotateY}deg) rotateX(${rotateX}deg)`;
+        },
+        onDeactivate: (el) => {
+          const card = el.querySelector('.card-rotation__card');
+          card.style.transform = 'rotateY(0deg) rotateX(0deg)';
+        }
+      });
+
+      // DEMO 3: Multi-Layer Parallax
+      // All layers are driven from the section's onScroll since they are
+      // positioned children inside a sticky container and don't scroll
+      // through the viewport independently.
+      const multiParallax = document.querySelector('[data-demo="multi-parallax"]');
+      const backLayer = multiParallax.querySelector('[data-layer-element="back"]');
+      const midLayer = multiParallax.querySelector('[data-layer-element="mid"]');
+      const frontLayer = multiParallax.querySelector('[data-layer-element="front"]');
+      const backDot = multiParallax.querySelector('[data-layer="back"]');
+      const midDot = multiParallax.querySelector('[data-layer="mid"]');
+      const frontDot = multiParallax.querySelector('[data-layer="front"]');
+
+      observer.register(multiParallax, {
+        onActivate: () => {
+          backDot.classList.add('is-active');
+          midDot.classList.add('is-active');
+          frontDot.classList.add('is-active');
+        },
+        onDeactivate: () => {
+          backDot.classList.remove('is-active');
+          midDot.classList.remove('is-active');
+          frontDot.classList.remove('is-active');
+        },
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / instance.elementHeight, 0, 1);
+
+          // Each layer moves upward at a different rate as you scroll.
+          // Back = slowest, front = fastest, creating depth illusion.
+          const backY = 60 - progress * 120;
+          backLayer.style.transform = `translateY(${backY}px) scale(${1 + progress * 0.05})`;
+          backLayer.style.opacity = 0.6 + progress * 0.4;
+
+          const midY = 100 - progress * 200;
+          midLayer.style.transform = `translateY(${midY}px) scale(${1 + progress * 0.08})`;
+          midLayer.style.opacity = 0.7 + progress * 0.3;
+
+          const frontY = 140 - progress * 280;
+          frontLayer.style.transform = `translateY(${frontY}px) scale(${1 + progress * 0.1})`;
+        }
+      });
+
+      // DEMO 4: Number Counter
+      const numberCounter = document.querySelector('[data-demo="number-counter"]');
+      observer.register(numberCounter, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = easeOutCubic(clamp(offset / (instance.elementHeight * 0.7), 0, 1));
+
+          const counters = el.querySelectorAll('.number-counter__value');
+          counters.forEach(counter => {
+            const target = parseFloat(counter.dataset.target);
+            const decimals = parseInt(counter.dataset.decimals) || 0;
+            const prefix = counter.dataset.prefix || '';
+            const suffix = counter.dataset.suffix || '';
+            const current = (target * progress).toFixed(decimals);
+            counter.textContent = prefix + current + suffix;
+          });
+        },
+        onDeactivate: (el) => {
+          const counters = el.querySelectorAll('.number-counter__value');
+          counters.forEach(counter => {
+            const prefix = counter.dataset.prefix || '';
+            const suffix = counter.dataset.suffix || '';
+            counter.textContent = prefix + '0' + suffix;
+          });
+        }
+      });
+
+      // DEMO 5: Horizontal Gallery
+      const horizontalGallery = document.querySelector('[data-demo="horizontal-gallery"]');
+      observer.register(horizontalGallery, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+
+          const track = el.querySelector('.horizontal-gallery__track');
+          const items = track.querySelectorAll('.horizontal-gallery__item');
+
+          // Calculate how far to scroll: from first item centered to last item centered
+          const itemWidth = 300;
+          const gap = 32; // 2rem
+          const maxScroll = (items.length - 1) * (itemWidth + gap);
+
+          const progress = clamp(offset / (instance.elementHeight - window.innerHeight), 0, 1);
+          const translateX = progress * maxScroll;
+
+          track.style.transform = `translateX(${-translateX}px)`;
+        },
+        onDeactivate: (el) => {
+          const track = el.querySelector('.horizontal-gallery__track');
+          track.style.transform = 'translateX(0)';
+        }
+      });
+
+      // DEMO 6: Morphing Blob
+      const morphingBlob = document.querySelector('[data-demo="morphing-blob"]');
+      observer.register(morphingBlob, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / instance.elementHeight, 0, 1);
+          // Use scroll offset as time to ensure continuous animation tied to scroll
+          const scrollTime = offset * 0.005;
+
+          const path = el.querySelector('.morphing-blob__path');
+          path.setAttribute('d', generateBlobPath(progress, scrollTime));
+        },
+        onDeactivate: (el) => {
+          const path = el.querySelector('.morphing-blob__path');
+          path.setAttribute('d', 'M100,20 C140,20 180,60 180,100 C180,140 140,180 100,180 C60,180 20,140 20,100 C20,60 60,20 100,20 Z');
+        }
+      });
+
+      // DEMO 7: Text Scramble
+      const textScrambleSection = document.querySelector('[data-demo="text-scramble"]');
+      const textScrambleEl = textScrambleSection.querySelector('.text-scramble__text');
+      const targetText = textScrambleEl.dataset.text;
+
+      observer.register(textScrambleSection, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / (instance.elementHeight * 0.6), 0, 1);
+          textScrambleEl.textContent = scrambleText(targetText, progress);
+        },
+        onDeactivate: () => {
+          textScrambleEl.textContent = '█'.repeat(targetText.length);
+        }
+      });
+
+      // DEMO 8: Staggered Lines
+      const staggeredLines = document.querySelector('[data-demo="staggered-lines"]');
+      observer.register(staggeredLines, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+
+          const lines = el.querySelectorAll('.staggered-lines__line');
+          const progress = clamp(offset / (instance.elementHeight * 0.5), 0, 1);
+
+          lines.forEach((line, i) => {
+            const lineStart = i * 0.08;
+            const lineProgress = clamp((progress - lineStart) / 0.25, 0, 1);
+            const eased = easeOutCubic(lineProgress);
+            line.style.transform = `scaleX(${eased})`;
+          });
+        },
+        onDeactivate: (el) => {
+          const lines = el.querySelectorAll('.staggered-lines__line');
+          lines.forEach(line => line.style.transform = 'scaleX(0)');
+        }
+      });
+
+      // DEMO 9: Split Screen Wipe
+      const splitWipe = document.querySelector('[data-demo="split-wipe"]');
+      observer.register(splitWipe, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / (instance.elementHeight * 0.7), 0, 1);
+          const leftSide = el.querySelector('.split-wipe__side--left');
+
+          const wipePercent = 100 - (progress * 100);
+          leftSide.style.clipPath = `inset(0 ${wipePercent}% 0 0)`;
+        },
+        onDeactivate: (el) => {
+          const leftSide = el.querySelector('.split-wipe__side--left');
+          leftSide.style.clipPath = 'inset(0 100% 0 0)';
+        }
+      });
+
+      // DEMO 10: Scale Zoom
+      const scaleZoom = document.querySelector('[data-demo="scale-zoom"]');
+      observer.register(scaleZoom, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / (instance.elementHeight - window.innerHeight), 0, 1);
+          const circle = el.querySelector('.scale-zoom__circle');
+
+          const scale = 1 + (progress * 29);
+          circle.style.transform = `scale(${scale})`;
+          circle.style.opacity = progress > 0.8 ? mapRange(progress, 0.8, 1, 1, 0) : 1;
+        },
+        onDeactivate: (el) => {
+          const circle = el.querySelector('.scale-zoom__circle');
+          circle.style.transform = 'scale(1)';
+          circle.style.opacity = 1;
+        }
+      });
+
+      // DEMO 11: Rotating Cube
+      const rotatingCube = document.querySelector('[data-demo="rotating-cube"]');
+      observer.register(rotatingCube, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / instance.elementHeight, 0, 1);
+          const scene = el.querySelector('.rotating-cube__scene');
+
+          const rotateX = progress * 360;
+          const rotateY = progress * 540;
+
+          scene.style.transform = `rotateX(${rotateX}deg) rotateY(${rotateY}deg)`;
+        },
+        onDeactivate: (el) => {
+          const scene = el.querySelector('.rotating-cube__scene');
+          scene.style.transform = 'rotateX(0deg) rotateY(0deg)';
+        }
+      });
+
+      // DEMO 12: Clip Path Reveal
+      const clipReveal = document.querySelector('[data-demo="clip-reveal"]');
+      observer.register(clipReveal, {
+        onScroll: (offset, el, instance) => {
+          updateOffset(el, offset);
+          const progress = clamp(offset / (instance.elementHeight * 0.8), 0, 1);
+          const overlay = el.querySelector('.clip-reveal__overlay');
+
+          const radius = progress * 150;
+          overlay.style.clipPath = `circle(${radius}% at 50% 50%)`;
+        },
+        onDeactivate: (el) => {
+          const overlay = el.querySelector('.clip-reveal__overlay');
+          overlay.style.clipPath = 'circle(0% at 50% 50%)';
+        }
+      });
+
+      // DEMO 13: CSS-Only Animation
+      // This demo shows that you can use --scroll-offset in CSS without any onScroll handler
+      const cssOnly = document.querySelector('[data-demo="css-only"]');
+      observer.register(cssOnly, {
+        // No onScroll needed - CSS uses --scroll-offset directly!
+        onScroll: (offset, el) => updateOffset(el, offset), // Just for the offset display
+      });
+
+      // DEMO 14: Direction Filtering
+      const directionFilter = document.querySelector('[data-demo="direction-filter"]');
+      const directionCards = directionFilter.querySelectorAll('.direction-filter__card');
+
+      directionCards.forEach((card) => {
+        const activateFrom = card.dataset.activateFrom;
+        const status = card.querySelector('.direction-filter__status');
+
+        observer.register(card, {
+          activateFrom,
+          onActivate: () => {
+            status.textContent = 'ACTIVE';
+          },
+          onDeactivate: () => {
+            status.textContent = 'Deactivated';
+          },
+        });
+      });
+
+      // DEMO 15: Programmatic Unregister
+      const unregisterDemo = document.querySelector('[data-demo="unregister-demo"]');
+      const unregisterItems = unregisterDemo.querySelectorAll('.unregister-demo__item');
+
+      observer.register(unregisterDemo, {
+        onScroll: (offset, el) => updateOffset(el, offset),
+      });
+
+      unregisterItems.forEach((item) => {
+        const progressBar = item.querySelector('.unregister-demo__progress');
+        const btn = item.querySelector('.unregister-demo__btn');
+
+        // Register each item
+        observer.register(item, {
+          onScroll: (offset, el, instance) => {
+            const progress = clamp(offset / instance.elementHeight, 0, 1);
+            progressBar.style.transform = `scaleX(${progress})`;
+          },
+          onDeactivate: (el) => {
+            progressBar.style.transform = 'scaleX(0)';
+          },
+        });
+
+        // Button to unregister
+        btn.addEventListener('click', () => {
+          observer.unregister(item);
+          item.classList.add('is-unregistered');
+          btn.textContent = 'Unregistered!';
+          btn.disabled = true;
+          progressBar.style.transform = 'scaleX(0)';
+        });
+      });
+
+      // DEMO 16: Multiple Observer Instances
+      const observerA = new LineObserver({
+        triggerLine: '25vh',
+        activeClass: 'is-active',
+      });
+
+      const observerB = new LineObserver({
+        triggerLine: '75vh',
+        activeClass: 'is-active',
+      });
+
+      const boxA = document.querySelector('[data-instance="a"]');
+      observerA.register(boxA, {
+        onActivate: (el) => {
+          el.querySelector('.multi-instance__status').textContent = 'ACTIVE (25vh)';
+        },
+        onDeactivate: (el) => {
+          el.querySelector('.multi-instance__status').textContent = 'Inactive';
+        },
+        onScroll: (offset, el, instance) => {
+          const progress = Math.min(offset / instance.elementHeight, 1);
+          el.style.borderColor = `hsl(${progress * 120}, 70%, 60%)`;
+        },
+      });
+
+      const boxB = document.querySelector('[data-instance="b"]');
+      observerB.register(boxB, {
+        onActivate: (el) => {
+          el.querySelector('.multi-instance__status').textContent = 'ACTIVE (75vh)';
+        },
+        onDeactivate: (el) => {
+          el.querySelector('.multi-instance__status').textContent = 'Inactive';
+        },
+        onScroll: (offset, el, instance) => {
+          const progress = Math.min(offset / instance.elementHeight, 1);
+          el.style.borderColor = `hsl(${240 + progress * 120}, 70%, 60%)`;
+        },
+      });
+
+      // Expose observer to console for debugging
+      window.lineObserver = observer;
+      console.log('LineObserver initialized. Access via window.lineObserver');
+    });
+  </script>
+</body>
+</html>
