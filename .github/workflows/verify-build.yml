@@ -1,3 +1,4 @@
+# This file is managed in https://github.com/happyprime/projects
 name: Verify build (Node 24)
 
 on: pull_request
