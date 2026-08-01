@@ -1,54 +1,61 @@
 {
-  "name": "@happyprime/line-observer",
-  "version": "0.0.1",
-  "description": "A performant scroll interaction observer that triggers handlers when elements cross a configurable trigger line in the viewport",
-  "type": "module",
-  "module": "line-observer.js",
-  "exports": {
-    ".": {
-      "import": "./line-observer.js"
-    }
-  },
-  "files": [
-    "line-observer.js",
-    "build/"
-  ],
-  "scripts": {
-    "lint": "eslint ./",
-    "fix": "eslint ./ --fix",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage",
-    "build": "rollup -c",
-    "prepare": "rollup -c"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/happyprime/line-observer.git"
-  },
-  "keywords": [
-    "scroll",
-    "observer",
-    "animation",
-    "intersection",
-    "trigger",
-    "viewport",
-    "scroll-driven"
-  ],
-  "author": "Happy Prime",
-  "license": "MIT",
-  "devDependencies": {
-    "@happyprime/eslint-config": "^1.0.0",
-    "@rollup/plugin-node-resolve": "^16.0.3",
-    "@rollup/plugin-terser": "^1.0.0",
-    "@vitest/coverage-v8": "^4.0.18",
-    "jsdom": "^28.1.0",
-    "rollup": "^4.59.0",
-    "terser": "^5.46.0",
-    "vitest": "^4.0.18"
-  },
-  "bugs": {
-    "url": "https://github.com/happyprime/line-observer/issues"
-  },
-  "homepage": "https://github.com/happyprime/line-observer#readme"
+	"name": "@happyprime/line-observer",
+	"version": "0.0.1",
+	"description": "A performant scroll interaction observer that triggers handlers when elements cross a configurable trigger line in the viewport",
+	"author": "Happy Prime",
+	"license": "MIT",
+	"keywords": [
+		"scroll",
+		"observer",
+		"animation",
+		"intersection",
+		"trigger",
+		"viewport",
+		"scroll-driven"
+	],
+	"homepage": "https://github.com/happyprime/line-observer#readme",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/happyprime/line-observer.git"
+	},
+	"bugs": {
+		"url": "https://github.com/happyprime/line-observer/issues"
+	},
+	"files": [
+		"line-observer.js",
+		"build/"
+	],
+	"type": "module",
+	"module": "line-observer.js",
+	"exports": {
+		".": {
+			"import": "./line-observer.js"
+		}
+	},
+	"devDependencies": {
+		"@happyprime/eslint-config": "^1.0.0",
+		"@rollup/plugin-node-resolve": "^16.0.3",
+		"@rollup/plugin-terser": "^1.0.0",
+		"@vitest/coverage-v8": "^4.0.18",
+		"@wordpress/npm-package-json-lint-config": "^5.10.0",
+		"jsdom": "^28.1.0",
+		"npm-package-json-lint": "^8.0.0",
+		"rollup": "^4.59.0",
+		"terser": "^5.46.0",
+		"vitest": "^4.0.18"
+	},
+	"scripts": {
+		"lint": "npm run lint:js",
+		"fix": "eslint ./ --fix",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"test:coverage": "vitest run --coverage",
+		"build": "rollup -c",
+		"prepare": "rollup -c",
+		"lint:js": "eslint ./",
+		"lint:package": "node ./node_modules/npm-package-json-lint/dist/cli.js ./package.json"
+	},
+	"npmpackagejsonlint": {
+		"extends": "@wordpress/npm-package-json-lint-config"
+	}
 }
