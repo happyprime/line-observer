@@ -150,8 +150,9 @@
 					await jump(lineInto(a, 200));
 					reset();
 					await setHeights(0, 20);
+					// Past the line, A holds its height.
 					return {
-						expected: { active: false, offset: 0, onDeactivate: 1 },
+						expected: { active: false, offset: 500, onDeactivate: 1 },
 						actual: {
 							active: a.classList.contains('is-active'),
 							offset: offsetOf(a),
