@@ -28,6 +28,7 @@
 		<li><a href="many.html">Many elements, three observers</a> (<a href="many.html?check">check</a>): 300 elements over three observers with different lines share one loop and six IntersectionObservers. Every element activates and deactivates in order, no frame reads the page after writing to it, and destroying one observer leaves the other two working.</li>
 		<li><a href="resize.html">Resize</a> (<a href="resize.html?check">check</a>): a height that goes back and forth, as a phone's toolbar shows and hides, leaves an element that <code>activateFrom</code> holds active held, and a width-only resize builds no IntersectionObserver. The check changes the viewport: in a headless run the runner does it, and by hand you set the sizes the page asks for with the device toolbar.</li>
 		<li><a href="options.html">Option values</a> (<a href="options.html?check">check</a>): elements registered from <code>data-</code> attributes, as a block's script would, turn on at their own lines. A string of digits is a number, a missing attribute keeps the default, and each invalid value logs one warning.</li>
+		<li><a href="script-tag.html">Script tag</a> (<a href="script-tag.html?check">check</a>): the README's classic script tag and child animation. The child moves, not the observed element, so in 10px steps the element activates and deactivates once each way.</li>
 	</ul>
 </body>
 </html>

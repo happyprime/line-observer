@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: script tag</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		.observed {
+			height: 600px;
+			margin: 0 16px;
+			border: 2px solid #999;
+			background: #f2f2f2;
+		}
+
+		.observed.is-active {
+			border-color: #087;
+		}
+
+		.observed__inner {
+			margin: 12px;
+			padding: 12px;
+			background: #087;
+			color: #fff;
+			font-family: ui-monospace, monospace;
+			font-size: 14px;
+		}
+
+		/* From the README's --scroll-offset section. */
+		.observed__inner {
+			opacity: clamp(0.3, var(--scroll-offset, 0) / 200, 1);
+			transform: translateY(calc(min(var(--scroll-offset, 0), 200) * -0.3px));
+		}
+	</style>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. The README's classic script tag, and its child animation. The child fades in and moves up 60px over the first 200px past the line. The section around it does not move, so it activates once and deactivates once each way.</p>
+		<nav>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>Activations: <strong id="activations">0</strong>, deactivations: <strong id="deactivations">0</strong></p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+		<section class="observed" id="observed">
+			<div class="observed__inner">.observed__inner</div>
+		</section>
+		<div class="spacer"></div>
+		<div class="spacer"></div>
+	</main>
+
+	<!-- From the README's "Script tag" section. -->
+	<script src="../build/line-observer.js"></script>
+	<script>
+		const observer = new LineObserver();
+	</script>
+
+	<script src="js/check.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, offsetOf, setUpChecks } = window.demoCheck;
+
+		const section = document.getElementById('observed');
+		const inner = section.querySelector('.observed__inner');
+		const counts = { activate: 0, deactivate: 0 };
+
+		const show = () => {
+			document.getElementById('activations').textContent = counts.activate;
+			document.getElementById('deactivations').textContent = counts.deactivate;
+		};
+
+		observer.register(section, {
+			onActivate: () => {
+				counts.activate++;
+				show();
+			},
+			onDeactivate: () => {
+				counts.deactivate++;
+				show();
+			},
+		});
+
+		// Scrolls in 10px steps and returns the transitions and the lowest opacity seen.
+		const steps = async (from, to) => {
+			const step = from < to ? 10 : -10;
+			let lowest = 1;
+
+			await jump(from);
+			counts.activate = 0;
+			counts.deactivate = 0;
+
+			for (let y = from; step > 0 ? y <= to : y >= to; y += step) {
+				window.scrollTo({ top: y, behavior: 'instant' });
+				await waitFrames(3);
+				lowest = Math.min(lowest, Number(getComputedStyle(inner).opacity));
+			}
+
+			return { activate: counts.activate, deactivate: counts.deactivate, lowestOpacity: lowest };
+		};
+
+		const once = { activate: 1, deactivate: 1, lowestOpacity: 0.3 };
+
+		setUpChecks([
+			{
+				name: 'The classic script tag defines LineObserver',
+				run: async () => ({
+					expected: { LineObserver: 'function', observer: true },
+					actual: {
+						LineObserver: typeof LineObserver,
+						observer: observer instanceof LineObserver,
+					},
+				}),
+			},
+			{
+				name: 'A scroll that puts the line 100px into the section activates it and moves the child',
+				run: async () => {
+					await jump(lineInto(section, -100));
+					await jump(lineInto(section, 100));
+					const style = getComputedStyle(inner);
+					return {
+						expected: { active: true, offset: 100, opacity: 0.5, transform: 'matrix(1, 0, 0, 1, 0, -30)' },
+						actual: {
+							active: section.classList.contains('is-active'),
+							offset: offsetOf(section),
+							opacity: Number(style.opacity),
+							transform: style.transform,
+						},
+					};
+				},
+			},
+			{
+				name: '10px steps down through the section: one activation, one deactivation',
+				run: async () => ({
+					expected: once,
+					actual: await steps(
+						lineInto(section, -100),
+						lineInto(section, section.offsetHeight + 100)
+					),
+				}),
+			},
+			{
+				name: '10px steps up through the section: one activation, one deactivation',
+				run: async () => ({
+					expected: once,
+					actual: await steps(
+						lineInto(section, section.offsetHeight + 100),
+						lineInto(section, -100)
+					),
+				}),
+			},
+		]);
+	</script>
+</body>
+</html>
