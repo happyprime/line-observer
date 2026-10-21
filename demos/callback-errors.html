@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: callback errors</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		.column + .column {
+			margin-top: 100px;
+		}
+
+		.pair {
+			display: flex;
+			align-items: flex-start;
+			gap: 16px;
+			margin: 0 16px;
+		}
+
+		.pair .box {
+			flex: 1;
+			margin: 0;
+		}
+
+		/* V comes near after U, so U's onActivate runs first in the pass. */
+		#v {
+			margin-top: 40px;
+		}
+	</style>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Scroll down. T's <code>onScroll</code> throws on its third call; boxes 1 to 4 should still activate, and T should lose <code>is-active</code> once it passes the line. Further down, U's <code>onActivate</code> unregisters V. Scroll fast enough that both cross the line in the same frame: V should get no class and no <code>--scroll-offset</code>.</p>
+		<nav>
+			<button type="button" id="restart">Start a new observer</button>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>Errors reported: <strong id="errors">0</strong></p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+		<section class="box column" id="t" data-name="T" style="height: 400px">
+			<strong>T</strong>: <code>onScroll</code> throws on its third call
+			<div class="readout">inactive</div>
+		</section>
+		<section class="box column" data-name="1" style="height: 300px">
+			<strong>1</strong>
+			<div class="readout">inactive</div>
+		</section>
+		<section class="box column" data-name="2" style="height: 300px">
+			<strong>2</strong>
+			<div class="readout">inactive</div>
+		</section>
+		<section class="box column" data-name="3" style="height: 300px">
+			<strong>3</strong>
+			<div class="readout">inactive</div>
+		</section>
+		<section class="box column" id="last" data-name="4" style="height: 300px">
+			<strong>4</strong>
+			<div class="readout">inactive</div>
+		</section>
+		<div class="spacer"></div>
+		<div class="pair">
+			<section class="box" id="u" style="height: 400px">
+				<strong>U</strong>: <code>onActivate</code> unregisters V
+				<div class="readout">inactive</div>
+			</section>
+			<section class="box" id="v" style="height: 400px">
+				<strong>V</strong>
+				<div class="readout">inactive</div>
+			</section>
+		</div>
+		<div class="spacer"></div>
+	</main>
+
+	<script src="../build/line-observer.js"></script>
+	<script src="js/check.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, offsetOf, setUpChecks } = window.demoCheck;
+
+		const column = [...document.querySelectorAll('.column')];
+		const last = document.getElementById('last');
+		const u = document.getElementById('u');
+		const v = document.getElementById('v');
+
+		let observer;
+		let errors = 0;
+		let activated = new Set();
+		let vCalls = 0;
+
+		// Counts each error the library reports, and keeps it out of the
+		// console. An error thrown out of a RAF callback lands here too.
+		window.addEventListener('error', (event) => {
+			event.preventDefault();
+			errors++;
+			document.getElementById('errors').textContent = errors;
+		});
+
+		const show = (box, note = '') => {
+			const offset = offsetOf(box);
+			box.querySelector('.readout').textContent =
+				(box.classList.contains('is-active') ? 'active' : 'inactive') +
+				(offset === null ? '' : `, --scroll-offset: ${offset}`) +
+				note;
+		};
+
+		// A new observer starts with fresh counts.
+		const start = () => {
+			if (observer) {
+				observer.destroy();
+			}
+			errors = 0;
+			activated = new Set();
+			vCalls = 0;
+			document.getElementById('errors').textContent = errors;
+
+			observer = new LineObserver({ triggerLine: '50vh' });
+
+			let tCalls = 0;
+			for (const box of column) {
+				observer.register(box, {
+					onActivate: (element) => {
+						activated.add(element.dataset.name);
+						show(element);
+					},
+					onDeactivate: show,
+					onScroll: (offset, element) => {
+						show(element);
+						if (element.id === 't' && ++tCalls === 3) {
+							throw new Error('T fails on its third onScroll call');
+						}
+					},
+				});
+			}
+
+			observer.register(u, {
+				onActivate: (element) => {
+					observer.unregister(v);
+					show(element);
+					show(v, ', unregistered');
+				},
+				onDeactivate: show,
+				onScroll: (offset, element) => show(element),
+			});
+			observer.register(v, {
+				onActivate: (element) => {
+					vCalls++;
+					show(element);
+				},
+				onDeactivate: show,
+				onScroll: (offset, element) => {
+					vCalls++;
+					show(element);
+				},
+			});
+
+			[...column, u, v].forEach((box) => show(box));
+		};
+
+		start();
+
+		document.getElementById('restart').addEventListener('click', start);
+
+		setUpChecks([
+			{
+				name: "T's onScroll throws on its third call: 1 to 4 still activate",
+				run: async () => {
+					await jump(0);
+					start();
+
+					// 60px steps, two frames each, until 4 has passed the line.
+					const end = lineInto(last, last.offsetHeight + 60);
+					for (let top = 0; top <= end; top += 60) {
+						window.scrollTo({ top, behavior: 'instant' });
+						await waitFrames(2);
+					}
+					await waitFrames();
+
+					return {
+						expected: {
+							activated: ['T', '1', '2', '3', '4'],
+							stillActive: [],
+							errors: 1,
+						},
+						actual: {
+							activated: [...activated],
+							stillActive: column
+								.filter((box) => box.classList.contains('is-active'))
+								.map((box) => box.dataset.name),
+							errors,
+						},
+					};
+				},
+			},
+			{
+				name: "U's onActivate unregisters V, which crosses in the same frame",
+				run: async () => {
+					await jump(0);
+					start();
+
+					// U comes near, then V, 40px lower. The IO band reaches
+					// 100px below the line.
+					await jump(lineInto(u, -80));
+					await jump(lineInto(u, -30));
+					// One move takes the line 50px into V and 90px into U.
+					await jump(lineInto(v, 50));
+
+					const actual = {
+						uActive: u.classList.contains('is-active'),
+						vActive: v.classList.contains('is-active'),
+						vOffset: offsetOf(v),
+						vCallbacks: vCalls,
+					};
+
+					observer.destroy();
+					actual.vActiveAfterDestroy = v.classList.contains('is-active');
+					actual.vOffsetAfterDestroy = offsetOf(v);
+
+					return {
+						expected: {
+							uActive: true,
+							vActive: false,
+							vOffset: null,
+							vCallbacks: 0,
+							vActiveAfterDestroy: false,
+							vOffsetAfterDestroy: null,
+						},
+						actual,
+					};
+				},
+			},
+		]);
+	</script>
+</body>
+</html>
