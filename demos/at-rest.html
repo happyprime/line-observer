@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: layout changes at rest</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		/* Scroll anchoring would move the page to keep A in place. */
+		html,
+		body {
+			overflow-anchor: none;
+		}
+
+		#grow,
+		#gap {
+			margin: 0 16px;
+			background: repeating-linear-gradient(45deg, #eee 0 10px, #fff 10px 20px);
+		}
+	</style>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Scroll A onto the line, then change the layout without scrolling. When A leaves the line it should lose <code>is-active</code>. When B comes near, A should get no <code>onScroll</code> call, no style write and no rect read.</p>
+		<nav>
+			<button type="button" id="toggle-grow">Grow content above A</button>
+			<button type="button" id="toggle-gap">Close the gap below A</button>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p id="counts"></p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+		<div id="grow" style="height: 0"></div>
+		<section class="box" id="a" style="height: 500px">
+			<strong>A</strong>, 500px tall
+			<div class="readout">inactive</div>
+		</section>
+		<div id="gap" style="height: 400px"></div>
+		<section class="box" id="b" style="height: 300px">
+			<strong>B</strong>, 300px tall
+			<div class="readout">inactive</div>
+		</section>
+		<div class="spacer"></div>
+	</main>
+
+	<script src="../build/line-observer.js"></script>
+	<script src="js/check.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, offsetOf, setUpChecks } = window.demoCheck;
+
+		const a = document.getElementById('a');
+		const b = document.getElementById('b');
+		const grow = document.getElementById('grow');
+		const gap = document.getElementById('gap');
+
+		// Counts the work LineObserver does on A.
+		const count = { onScroll: 0, styleWrites: 0, rectReads: 0, onDeactivate: 0 };
+
+		a.getBoundingClientRect = function () {
+			count.rectReads++;
+			return Element.prototype.getBoundingClientRect.call(this);
+		};
+
+		a.style.setProperty = function (...args) {
+			count.styleWrites++;
+			return CSSStyleDeclaration.prototype.setProperty.apply(this, args);
+		};
+
+		const showCounts = () => {
+			document.getElementById('counts').textContent =
+				`A: ${count.onScroll} onScroll calls, ${count.styleWrites} style writes, ${count.rectReads} rect reads.`;
+		};
+
+		const show = (box) => {
+			box.querySelector('.readout').textContent = box.classList.contains('is-active')
+				? `active, --scroll-offset: ${offsetOf(box)}`
+				: 'inactive';
+			showCounts();
+		};
+
+		const observer = new LineObserver({ triggerLine: '50vh' });
+
+		observer.register(a, {
+			onActivate: show,
+			onDeactivate: (element) => {
+				count.onDeactivate++;
+				show(element);
+			},
+			onScroll: (offset, element) => {
+				count.onScroll++;
+				show(element);
+			},
+		});
+
+		observer.register(b, { onActivate: show, onDeactivate: show, onScroll: (o, element) => show(element) });
+		showCounts();
+
+		const setHeights = async (growPx, gapPx) => {
+			grow.style.height = `${growPx}px`;
+			gap.style.height = `${gapPx}px`;
+			await waitFrames();
+		};
+
+		document.getElementById('toggle-grow').addEventListener('click', async () => {
+			await setHeights(grow.offsetHeight ? 0 : 800, gap.offsetHeight);
+			showCounts();
+		});
+
+		document.getElementById('toggle-gap').addEventListener('click', async () => {
+			await setHeights(grow.offsetHeight, gap.offsetHeight === 400 ? 20 : 400);
+			showCounts();
+		});
+
+		const reset = () => {
+			count.onScroll = 0;
+			count.styleWrites = 0;
+			count.rectReads = 0;
+			count.onDeactivate = 0;
+		};
+
+		setUpChecks([
+			{
+				name: 'Content above A grows 800px at rest: A drops below the line',
+				run: async () => {
+					await jump(0);
+					await setHeights(0, 20);
+					await jump(lineInto(a, 200));
+					reset();
+					await setHeights(800, 20);
+					return {
+						expected: { active: false, offset: 0, onDeactivate: 1 },
+						actual: {
+							active: a.classList.contains('is-active'),
+							offset: offsetOf(a),
+							onDeactivate: count.onDeactivate,
+						},
+					};
+				},
+			},
+			{
+				name: 'Content above A shrinks 800px at rest: A rises past the line',
+				run: async () => {
+					await jump(0);
+					await setHeights(800, 20);
+					await jump(lineInto(a, 200));
+					reset();
+					await setHeights(0, 20);
+					return {
+						expected: { active: false, offset: 0, onDeactivate: 1 },
+						actual: {
+							active: a.classList.contains('is-active'),
+							offset: offsetOf(a),
+							onDeactivate: count.onDeactivate,
+						},
+					};
+				},
+			},
+			{
+				name: 'B comes near at rest: A gets no onScroll, style write or rect read',
+				run: async () => {
+					await jump(0);
+					await setHeights(0, 400);
+					// The line is 450px into A, 50px above its bottom edge.
+					await jump(lineInto(a, 450));
+					reset();
+					// B's top edge moves to 70px below the line, inside the IO band.
+					await setHeights(0, 20);
+					return {
+						expected: {
+							aActive: true,
+							bActive: false,
+							onScroll: 0,
+							styleWrites: 0,
+							rectReads: 0,
+						},
+						actual: {
+							aActive: a.classList.contains('is-active'),
+							bActive: b.classList.contains('is-active'),
+							onScroll: count.onScroll,
+							styleWrites: count.styleWrites,
+							rectReads: count.rectReads,
+						},
+					};
+				},
+			},
+		]);
+	</script>
+</body>
+</html>
