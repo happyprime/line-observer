@@ -3659,3 +3659,231 @@ describe('a callback that unregisters or destroys', () => {
 		expect(window.requestAnimationFrame).toHaveBeenCalledTimes(2);
 	});
 });
+
+describe('the loop at rest', () => {
+	let observer;
+	let a;
+	let b;
+	let pending;
+	let nextId;
+
+	// Runs the RAF callbacks requested before this frame.
+	const frame = () => {
+		const callbacks = [...pending.values()];
+		pending.clear();
+		callbacks.forEach((callback) => callback());
+	};
+
+	// Runs frames until the loop stops, and returns how many it took.
+	const rest = () => {
+		let frames = 0;
+		while (observer.isActive() && frames < 10) {
+			frame();
+			frames++;
+		}
+		return frames;
+	};
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const report = (element, isIntersecting) => {
+		observer.handleIntersection(
+			[{ isIntersecting }],
+			observer.instances.get(element)
+		);
+	};
+
+	const stateOf = (element) => observer.instances.get(element).state;
+
+	beforeEach(() => {
+		pending = new Map();
+		nextId = 1;
+		window.requestAnimationFrame.mockImplementation((callback) => {
+			pending.set(nextId, callback);
+			return nextId++;
+		});
+		window.cancelAnimationFrame.mockImplementation((id) => {
+			pending.delete(id);
+		});
+
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		a = document.createElement('div');
+		b = document.createElement('div');
+		for (const element of [a, b]) {
+			Object.defineProperty(element, 'offsetHeight', {
+				value: 300,
+				configurable: true,
+			});
+			document.body.append(element);
+		}
+	});
+
+	afterEach(() => {
+		a.remove();
+		b.remove();
+		observer.destroy();
+	});
+
+	it('should stop after two ticks with no move and no report', () => {
+		// `a` lies across the line, so register() starts the loop.
+		place(a, 400, 700);
+		observer.register(a);
+		expect(observer.isActive()).toBe(true);
+
+		frame();
+		expect(observer.isActive()).toBe(true);
+
+		frame();
+		expect(observer.isActive()).toBe(false);
+		expect(pending.size).toBe(0);
+		expect(observer.getActiveCount()).toBe(1);
+	});
+
+	it('should count only still ticks in a row', () => {
+		place(a, 400, 700);
+		observer.register(a);
+
+		frame();
+		scrollWindowTo(10);
+		place(a, 390, 690);
+		frame();
+		frame();
+		expect(observer.isActive()).toBe(true);
+
+		frame();
+		expect(observer.isActive()).toBe(false);
+	});
+
+	it('should re-read an active element after an anchor jump made while stopped', () => {
+		const onScroll = vi.fn();
+
+		// The line is 100px into `a`.
+		place(a, 400, 700);
+		observer.register(a, { onScroll });
+		rest();
+		expect(observer.isActive()).toBe(false);
+
+		// An anchor jump moves the page 150px. Chromium runs the frame
+		// before the scroll event, and nothing is waiting for that frame.
+		Object.defineProperty(window, 'scrollY', {
+			value: 150,
+			configurable: true,
+		});
+		place(a, 250, 550);
+		frame();
+
+		window.dispatchEvent(new Event('scroll'));
+		expect(observer.isActive()).toBe(true);
+		frame();
+
+		expect(stateOf(a)).toBe('active');
+		expect(a.style.getPropertyValue('--scroll-offset')).toBe('250');
+		expect(onScroll).toHaveBeenCalledWith(250, a, observer.instances.get(a));
+	});
+
+	it('should re-read the state of an active element a scroll moved while stopped', () => {
+		const onDeactivate = vi.fn();
+
+		place(a, 400, 700);
+		observer.register(a, { onDeactivate });
+		rest();
+		expect(observer.isActive()).toBe(false);
+
+		// A 450px jump takes `a` past the line, and past the IO band.
+		scrollWindowTo(450);
+		place(a, -50, 250);
+		frame();
+
+		expect(stateOf(a)).toBe('passed');
+		expect(a.classList.contains('is-active')).toBe(false);
+		expect(a.style.getPropertyValue('--scroll-offset')).toBe('0');
+		expect(onDeactivate).toHaveBeenCalledTimes(1);
+	});
+
+	it('should start again when IO reports an element coming near', () => {
+		const onActivate = vi.fn();
+
+		place(a, 400, 700);
+		place(b, 1300, 1600);
+		observer.register(a);
+		observer.register(b, { onActivate });
+		rest();
+		expect(observer.isActive()).toBe(false);
+
+		// Content above `b` collapses at rest and leaves it across the line.
+		place(b, 450, 750);
+		report(b, true);
+		expect(observer.isActive()).toBe(true);
+		frame();
+
+		expect(stateOf(b)).toBe('active');
+		expect(onActivate).toHaveBeenCalledTimes(1);
+	});
+
+	it('should start again when IO reports an active element leaving', () => {
+		const onDeactivate = vi.fn();
+
+		place(a, 400, 700);
+		observer.register(a, { onDeactivate });
+		rest();
+		expect(observer.isActive()).toBe(false);
+
+		// Content above grows 800px at rest and pushes `a` out of the
+		// band, below the line.
+		place(a, 1200, 1500);
+		report(a, false);
+		expect(observer.isActive()).toBe(true);
+		frame();
+
+		expect(stateOf(a)).toBe('inactive');
+		expect(onDeactivate).toHaveBeenCalledTimes(1);
+	});
+
+	it('should start again when a resize pass activates an element', () => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+		place(a, 400, 800);
+		place(b, 600, 900);
+		observer.register(a);
+		observer.register(b);
+		rest();
+		expect(observer.isActive()).toBe(false);
+
+		// A taller viewport moves the line to 700, across `b`.
+		Object.defineProperty(window, 'innerHeight', {
+			value: 1400,
+			configurable: true,
+		});
+		observer.handleResize();
+		vi.advanceTimersByTime(200);
+		vi.useRealTimers();
+
+		expect(stateOf(b)).toBe('active');
+		expect(observer.isActive()).toBe(true);
+	});
+
+	it('should start again when register() activates an element', () => {
+		place(a, 400, 700);
+		observer.register(a);
+		rest();
+		expect(observer.isActive()).toBe(false);
+
+		place(b, 450, 750);
+		observer.register(b);
+
+		expect(observer.isActive()).toBe(true);
+	});
+
+	it('should not start on a scroll when nothing is near or active', () => {
+		place(a, 1300, 1600);
+		observer.register(a);
+
+		scrollWindowTo(100);
+
+		expect(observer.isActive()).toBe(false);
+		expect(pending.size).toBe(0);
+	});
+});
