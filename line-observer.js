@@ -32,6 +32,11 @@
 // than one, so a scroll that skips a frame does not stop and restart it.
 const STILL_FRAMES = 2;
 
+// How far above the viewport the edge observer's root reaches, in px. An
+// element higher than this reads as below the line to that observer.
+// Chromium clamps a larger margin to 33,554,432px.
+const EDGE_REACH = 10000000;
+
 class LineObserver {
 	/**
 	 * Create a new LineObserver instance
@@ -39,6 +44,9 @@ class LineObserver {
 	 * @param {Object}        options                     - Global default options
 	 * @param {string|number} [options.triggerLine]       - Position of trigger line (px, %, vh, vw)
 	 * @param {string}        [options.activeClass]       - Class added when element is active
+	 * @param {string}        [options.passedClass]       - Class present while element is past the line
+	 * @param {boolean}       [options.once]              - Activate the element once, then stop observing it
+	 *                                                    (default: false)
 	 * @param {string}        [options.activateFrom]      - Which side the element crosses the trigger line from to activate:
 	 *                                                    'below' (element rises from below the line, scrolling down),
 	 *                                                    'above' (element drops from above the line, scrolling up),
@@ -55,6 +63,8 @@ class LineObserver {
 		this.defaults = {
 			triggerLine: '50vh',
 			activeClass: 'is-active',
+			passedClass: 'is-passed',
+			once: false,
 			activateFrom: 'both',
 			nearMargin: 100,
 			cssCustomProperty: true,
@@ -177,7 +187,8 @@ class LineObserver {
 		// Larger values detect elements earlier but keep the RAF loop running
 		// longer; smaller values are more efficient but may miss fast scrolls.
 		// The active-instances pass in tick() acts as a safety net for elements
-		// that skip the band entirely during very fast scrolling.
+		// that skip the band entirely during very fast scrolling, and the edge
+		// observer reports elements that cross the line without entering it.
 		//
 		// Note: if nearMargin exceeds the trigger line's distance from a viewport
 		// edge, the rootMargin becomes positive on that side, extending the band
@@ -239,6 +250,57 @@ class LineObserver {
 				this.reportedInstances.add(instance);
 				this.startLoop();
 			}
+		}
+	}
+
+	/**
+	 * Creates an IntersectionObserver that reports each time the element's top edge crosses the trigger line.
+	 *
+	 * The root reaches from `EDGE_REACH` above the viewport down to the
+	 * trigger line, so the element intersects it while its top edge is above
+	 * the line. A jump can take an element across the line without it
+	 * entering the near band, and a layout change can move one across with
+	 * the page at rest. This observer reports both.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @return {IntersectionObserver} The created IntersectionObserver.
+	 * @private
+	 */
+	createEdgeObserver(instance) {
+		const bottomMargin = -(this.viewportHeight - instance.triggerLinePx);
+
+		const observer = new IntersectionObserver(
+			(entries) => this.handleEdgeIntersection(entries, instance),
+			{
+				rootMargin: `${EDGE_REACH}px 0px ${bottomMargin}px 0px`,
+				threshold: [0],
+			}
+		);
+
+		observer.observe(instance.element);
+		return observer;
+	}
+
+	/**
+	 * Asks for a pass when the element's top edge is on the other side of the line from where its state says.
+	 *
+	 * Each observer reports every element when it starts, and the state
+	 * already agrees for most of them, so those reports ask for nothing.
+	 *
+	 * @param {IntersectionObserverEntry[]} entries  - Array of intersection observer entries.
+	 * @param {Object}                      instance - The observer instance associated with the intersection.
+	 * @private
+	 */
+	handleEdgeIntersection(entries, instance) {
+		if (this.destroyed || !this._isRegistered(instance)) {
+			return;
+		}
+
+		const topAboveLine = entries[entries.length - 1].isIntersecting;
+
+		if (topAboveLine !== (instance.state !== 'inactive')) {
+			this.reportedInstances.add(instance);
+			this.startLoop();
 		}
 	}
 
@@ -335,10 +397,15 @@ class LineObserver {
 
 		const { element, options } = instance;
 
+		if (oldState === 'passed') {
+			element.classList.remove(options.passedClass);
+		} else if (newState === 'passed') {
+			element.classList.add(options.passedClass);
+		}
+
 		if (newState === 'active') {
 			element.classList.add(options.activeClass);
 			this.activeInstances.add(instance);
-			this.startLoop();
 
 			if (options.onActivate) {
 				this._call(options.onActivate, element, instance);
@@ -402,10 +469,12 @@ class LineObserver {
 			elementHeight: 0,
 			triggerLinePx: this.parseTriggerLine(mergedOptions.triggerLine),
 			observer: null,
+			edgeObserver: null,
 		};
 
-		// Create and attach observer
+		// Create and attach observers
 		instance.observer = this.createObserver(instance);
+		instance.edgeObserver = this.createEdgeObserver(instance);
 		this.instances.set(element, instance);
 
 		// Check initial state (element might already be in view)
@@ -417,11 +486,12 @@ class LineObserver {
 	/**
 	 * Check if element is already in active zone on registration.
 	 *
-	 * Called once at registration time. If the element already spans the
-	 * trigger line, it activates immediately regardless of `activateFrom`
-	 * (there is no scroll direction at registration time), and gets its
-	 * values and `onScroll`. Elements fully above the trigger line are marked
-	 * as 'passed'.
+	 * Called once at registration time, regardless of `activateFrom`, as
+	 * there is no scroll direction at registration time. An element that
+	 * spans the trigger line activates and gets its values and `onScroll`.
+	 * An element fully above the line, as on a page reloaded partway down,
+	 * gets `onActivate`, `onScroll` and `onDeactivate`, and ends 'passed'.
+	 * With `once`, it is revealed instead.
 	 *
 	 * This reads the element and then writes to it. Registering many
 	 * elements that are already across the line can make the browser lay out
@@ -450,26 +520,35 @@ class LineObserver {
 			return this;
 		}
 
-		// Clean up observer
-		if (instance.observer) {
-			instance.observer.disconnect();
-		}
+		this._forget(instance);
 
-		// Remove from tracking sets
-		this.activeInstances.delete(instance);
-		this.nearInstances.delete(instance);
-		this.reportedInstances.delete(instance);
-
-		// Remove class and custom properties
-		element.classList.remove(instance.options.activeClass);
+		// Remove classes and custom properties
+		element.classList.remove(
+			instance.options.activeClass,
+			instance.options.passedClass
+		);
 		if (instance.options.cssCustomProperty) {
 			element.style.removeProperty('--scroll-offset');
 			element.style.removeProperty('--scroll-progress');
 		}
 
-		this.instances.delete(element);
-
 		return this;
+	}
+
+	/**
+	 * Stops observing an element and drops every reference to it, leaving its classes and properties as they are.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @private
+	 */
+	_forget(instance) {
+		instance.observer.disconnect();
+		instance.edgeObserver.disconnect();
+
+		this.activeInstances.delete(instance);
+		this.nearInstances.delete(instance);
+		this.reportedInstances.delete(instance);
+		this.instances.delete(instance.element);
 	}
 
 	/**
@@ -544,37 +623,61 @@ class LineObserver {
 	 * Reads the element's rect, and measures it if it is active or becomes
 	 * active. It writes nothing to the DOM.
 	 *
+	 * An element can go between 'inactive' and 'passed' with no pass in
+	 * between: a fast scroll, a jump, a layout change, or registration on a
+	 * page already scrolled past it. It then passes through 'active', if a
+	 * crossing in that direction may activate it, so it gets `onActivate`,
+	 * `onScroll` and `onDeactivate` in the same pass. An element with `once`
+	 * stops at 'active'.
+	 *
 	 * @param {Object}  instance - The observer instance to read.
 	 * @param {boolean} filter   - Whether `activateFrom` applies. It does not
 	 *                           at registration or after a resize.
-	 * @return {Object|null} `{ instance, from, to, changed }`, or null.
+	 * @return {Object|null} `{ instance, from, to, through, changed }`, or null.
 	 * @private
 	 */
 	_read(instance, filter) {
+		const { element, options } = instance;
 		const from = instance.state;
 		let to = 'inactive';
+		let through = false;
 		let changed = false;
 
-		if (instance.element.isConnected) {
-			const rect = instance.element.getBoundingClientRect();
+		const rect = element.isConnected
+			? element.getBoundingClientRect()
+			: null;
+
+		// An element with no box, such as one with `display: none`, has a
+		// rect of zeros, which reads as past the line. It counts as inactive.
+		if (rect && (rect.width !== 0 || rect.height !== 0)) {
 			to = this._determineState(rect, instance.triggerLinePx);
 
-			if (
-				filter &&
-				to !== from &&
-				this._shouldSuppressTransition(
-					instance.options.activateFrom,
-					this.currentDirection,
-					from,
-					to
-				)
-			) {
-				to = from;
+			if (to !== from) {
+				const skipped = to !== 'active' && from !== 'active';
+				const suppressed =
+					filter &&
+					this._shouldSuppressTransition(
+						options.activateFrom,
+						this.currentDirection,
+						from,
+						skipped ? 'active' : to
+					);
+
+				if (skipped) {
+					through = !suppressed;
+				} else if (suppressed) {
+					to = from;
+				}
+			}
+
+			if (through && options.once) {
+				to = 'active';
+				through = false;
 			}
 
 			// An element that leaves 'active' is measured too, so the height
 			// it holds past the line is current.
-			if (to === 'active' || from === 'active') {
+			if (to === 'active' || from === 'active' || through) {
 				changed = this._measure(instance, rect);
 			}
 		}
@@ -583,25 +686,39 @@ class LineObserver {
 			return null;
 		}
 
-		return { instance, from, to, changed };
+		return { instance, from, to, through, changed };
 	}
 
 	/**
 	 * Applies state changes, then writes values for each active element that moved or activated.
 	 *
+	 * A `once` element that activates gets its values, then LineObserver
+	 * forgets it, so it keeps its class and values for good.
+	 *
 	 * @param {Object[]} changes - Results of `_read()`.
 	 * @private
 	 */
 	_apply(changes) {
-		for (const { instance, to } of changes) {
+		for (const { instance, to, through } of changes) {
+			if (through) {
+				this.transitionState(instance, 'active');
+			}
 			this.transitionState(instance, to);
 		}
 
 		for (const { instance, from, changed } of changes) {
 			if (instance.state === 'active' && (changed || from !== 'active')) {
 				this._writeValues(instance);
+
+				if (instance.options.once && this._isRegistered(instance)) {
+					this._forget(instance);
+				}
 			}
 		}
+
+		// After the writes, so an element that only passed through 'active',
+		// or that `once` released, does not start it.
+		this.startLoop();
 	}
 
 	/**
@@ -641,12 +758,8 @@ class LineObserver {
 	 * @private
 	 */
 	tick() {
-		if (
-			this.destroyed ||
-			(this.activeInstances.size === 0 && this.nearInstances.size === 0)
-		) {
+		if (this.destroyed || !this._hasWork()) {
 			this.isRunning = false;
-			this.reportedInstances.clear();
 			return;
 		}
 
@@ -690,6 +803,17 @@ class LineObserver {
 					read(instance);
 				}
 			}
+
+			// The edge observer reports elements a jump took across the
+			// line far from it, which are neither near nor active.
+			for (const instance of this.reportedInstances) {
+				if (
+					!this.nearInstances.has(instance) &&
+					!this.activeInstances.has(instance)
+				) {
+					read(instance);
+				}
+			}
 		} else {
 			this.reportedInstances.forEach(read);
 		}
@@ -709,7 +833,7 @@ class LineObserver {
 	}
 
 	/**
-	 * Starts the RAF loop if anything is near or active.
+	 * Starts the RAF loop if anything is near, active or reported.
 	 *
 	 * `lastScrollY` keeps the position of the last pass. The loop can stop
 	 * with elements active, and the first tick after a restart must see a
@@ -718,16 +842,27 @@ class LineObserver {
 	 * @private
 	 */
 	startLoop() {
-		if (
-			this.isRunning ||
-			(this.activeInstances.size === 0 && this.nearInstances.size === 0)
-		) {
+		if (this.isRunning || !this._hasWork()) {
 			return;
 		}
 
 		this.isRunning = true;
 		this.stillFrames = 0;
 		this.rafId = requestAnimationFrame(this.tick);
+	}
+
+	/**
+	 * Returns whether any element is near, active or reported.
+	 *
+	 * @return {boolean} True if the loop has something to read.
+	 * @private
+	 */
+	_hasWork() {
+		return (
+			this.activeInstances.size > 0 ||
+			this.nearInstances.size > 0 ||
+			this.reportedInstances.size > 0
+		);
 	}
 
 	/**
@@ -775,13 +910,13 @@ class LineObserver {
 				if (!instance.element.isConnected) {
 					continue;
 				}
-				if (instance.observer) {
-					instance.observer.disconnect();
-				}
+				instance.observer.disconnect();
+				instance.edgeObserver.disconnect();
 				instance.triggerLinePx = this.parseTriggerLine(
 					instance.options.triggerLine
 				);
 				instance.observer = this.createObserver(instance);
+				instance.edgeObserver = this.createEdgeObserver(instance);
 
 				const change = this._read(instance, false);
 				if (change) {
@@ -849,10 +984,12 @@ class LineObserver {
 
 		// Disconnect all observers
 		for (const instance of this.instances.values()) {
-			if (instance.observer) {
-				instance.observer.disconnect();
-			}
-			instance.element.classList.remove(instance.options.activeClass);
+			instance.observer.disconnect();
+			instance.edgeObserver.disconnect();
+			instance.element.classList.remove(
+				instance.options.activeClass,
+				instance.options.passedClass
+			);
 			if (instance.options.cssCustomProperty) {
 				instance.element.style.removeProperty('--scroll-offset');
 				instance.element.style.removeProperty('--scroll-progress');

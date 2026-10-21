@@ -57,6 +57,8 @@ Options passed to the constructor set defaults for all registered elements. Each
 const observer = new LineObserver({
   triggerLine: '50vh',        // Position of the trigger line (default: '50vh')
   activeClass: 'is-active',  // Class added when element is active (default: 'is-active')
+  passedClass: 'is-passed',  // Class present while element is past the line (default: 'is-passed')
+  once: false,               // Activate once, then stop observing the element (default: false)
   activateFrom: 'both',      // Where activation triggers from: 'both', 'below', 'above' (default: 'both')
   nearMargin: 100,           // IO detection band half-width in px (default: 100)
   cssCustomProperty: true,   // Set --scroll-offset and --scroll-progress (default: true)
@@ -70,10 +72,12 @@ const observer = new LineObserver({
 | --- | --- | --- | --- |
 | `triggerLine` | `string \| number` | `'50vh'` | Where the trigger line sits in the viewport. Accepts px, %, vh, vw units or a raw number (treated as px). |
 | `activeClass` | `string` | `'is-active'` | CSS class added to the element while it is in the active zone. |
+| `passedClass` | `string` | `'is-passed'` | CSS class present while the element is past the line: its state is `'passed'`. It gives CSS a stable end state. |
+| `once` | `boolean` | `false` | When true, the element activates the first time it reaches the line, or is found past it, and then LineObserver stops observing it. It keeps `activeClass`, its values are written once, and `onDeactivate` never runs. See [Reveal once](#reveal-once). |
 | `activateFrom` | `string` | `'both'` | Which side the element crosses the trigger line from to activate: `'below'` (scrolling down), `'above'` (scrolling up), or `'both'`. |
-| `nearMargin` | `number` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling. |
+| `nearMargin` | `number` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling, and a second IntersectionObserver per element reports elements that cross the line without entering the band. |
 | `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` and `--scroll-progress` on each element when its values change. Set to false if you only use callbacks. |
-| `onActivate` | `function \| null` | `null` | Called when an element crosses the trigger line and becomes active. Receives `(element, instance)`. |
+| `onActivate` | `function \| null` | `null` | Called when an element crosses the trigger line and becomes active, or is found past it. Receives `(element, instance)`. |
 | `onDeactivate` | `function \| null` | `null` | Called when an element leaves the active zone. Receives `(element, instance)`. |
 | `onScroll` | `function \| null` | `null` | Called when the element activates, in each frame in which an active element's offset or progress changes, and once more with the value it holds when it leaves the active zone, before `onDeactivate`. Receives `(offset, element, instance)`. |
 
@@ -92,7 +96,9 @@ observer
 
 ### unregister(element)
 
-Stop observing an element. Removes the active class, `--scroll-offset` and `--scroll-progress`. Returns the instance for chaining.
+Stop observing an element. Removes the active and passed classes, `--scroll-offset` and `--scroll-progress`. Returns the instance for chaining.
+
+A `once` element that has been revealed is no longer observed, so `unregister()` leaves it alone.
 
 ```js
 observer.unregister(el1);
@@ -100,7 +106,7 @@ observer.unregister(el1);
 
 ### destroy()
 
-Tear down everything: stops the RAF loop, disconnects all IntersectionObservers, removes classes and custom properties from all elements, and removes the resize and scroll listeners.
+Tear down everything: stops the RAF loop, disconnects all IntersectionObservers, removes classes and custom properties from all observed elements, and removes the resize and scroll listeners. Revealed `once` elements keep theirs.
 
 ```js
 observer.destroy();
@@ -116,7 +122,7 @@ observer.getActiveCount(); // 3
 
 ### getTotalCount()
 
-Returns the total number of registered elements.
+Returns the number of elements being observed. A `once` element leaves the count when it is revealed.
 
 ```js
 observer.getTotalCount(); // 10
@@ -182,6 +188,18 @@ Each registered element can be in one of three states:
 - `'active'` -- element spans the trigger line (top above, bottom below).
 - `'passed'` -- element is entirely above the trigger line.
 
+An element can go from `'inactive'` to `'passed'` with no frame that sees it on the line: it is past the line when it is registered, as on a page reloaded partway down; a fast scroll or a jump takes it across; or content added or removed above it moves it across. It still activates on the way, so its callbacks stay balanced: `onActivate`, then `onScroll` with the value it holds, then `onDeactivate`, all in one frame. Going straight back from `'passed'` to `'inactive'`, as on a jump to the top of the page, does the same. `activateFrom` filters these by the direction of the last scroll, as it filters any crossing. `register()` ignores `activateFrom`.
+
+While an element is `'passed'` it has the `passedClass`, `is-passed` by default. Use it to hold an end state in CSS:
+
+```css
+.observed.is-passed .observed__inner {
+  opacity: 1;
+}
+```
+
+An element with no box, such as one with `display: none`, counts as `'inactive'`.
+
 ### Supported units
 
 | Value | Meaning |
@@ -229,6 +247,41 @@ When `activateFrom` is `'above'`:
 - Once active, deactivation by scrolling back down (element passing above the trigger line) is suppressed.
 
 Known limit: with `'below'` or `'above'`, a layout change at rest, such as content above the element growing, is filtered with the direction of the last scroll. That direction has nothing to do with the layout change, so the element can miss an activation or stay active past the line.
+
+## Reveal once
+
+For a reveal that runs once, register with `once: true` and put a CSS transition on `.is-active`. LineObserver adds the class the first time the element reaches the line, or finds it past the line, and then stops observing it. The class stays, so scrolling back up does not hide the content again.
+
+```html
+<section class="reveal">
+  <div class="reveal__inner">…</div>
+</section>
+```
+
+```css
+.reveal__inner {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.4s, transform 0.4s;
+}
+
+.reveal.is-active .reveal__inner {
+  opacity: 1;
+  transform: none;
+}
+```
+
+```js
+document.querySelectorAll('.reveal').forEach((element) => {
+  observer.register(element, { once: true });
+});
+```
+
+Elements above the line when the page loads, or put above it by a jump or by content added above them, are revealed too. An element you add to the page needs its own `register()` call.
+
+Transition a child, not the observed element. LineObserver measures the element's box, which a transform moves.
+
+A revealed element is no longer observed. `getTotalCount()` does not count it, `unregister()` and `destroy()` leave its class and values alone, and LineObserver keeps no reference to it.
 
 ## The --scroll-offset CSS custom property
 
