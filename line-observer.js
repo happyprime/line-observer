@@ -74,6 +74,10 @@ class LineObserver {
 		this.lastScrollY = window.scrollY;
 		this.currentDirection = 'down';
 
+		// Set when an element comes near the trigger line, so the next
+		// tick works out its state even if the page has not moved since.
+		this.nearChanged = false;
+
 		// Bind methods
 		this.tick = this.tick.bind(this);
 		this.handleResize = this.handleResize.bind(this);
@@ -203,6 +207,10 @@ class LineObserver {
 
 		if (entry.isIntersecting) {
 			this.nearInstances.add(instance);
+			// IntersectionObserver reports after the frame in which the page
+			// moved. By then tick() may have already spent that movement on
+			// the elements that were near before, so ask for one more pass.
+			this.nearChanged = true;
 			this.startLoop();
 		} else {
 			this.nearInstances.delete(instance);
@@ -482,14 +490,22 @@ class LineObserver {
 
 		const scrollY = window.scrollY;
 
-		// Skip all work if scroll position hasn't changed
-		if (scrollY === this.lastScrollY) {
+		// Skip all work if scroll position hasn't changed, unless an element
+		// has come near the trigger line since the last pass. A jump that
+		// ends at rest (an in-page link, Page Down, an instant scrollTo)
+		// leaves the page still by the time its elements are reported.
+		if (scrollY === this.lastScrollY && !this.nearChanged) {
 			this.rafId = requestAnimationFrame(this.tick);
 			return;
 		}
 
-		// Update direction tracking
-		this.currentDirection = scrollY > this.lastScrollY ? 'down' : 'up';
+		this.nearChanged = false;
+
+		// Update direction tracking. A pass asked for by a newly near
+		// element, with the page at rest, keeps the direction it had.
+		if (scrollY !== this.lastScrollY) {
+			this.currentDirection = scrollY > this.lastScrollY ? 'down' : 'up';
+		}
 
 		// === STATE TRANSITIONS FOR NEAR ELEMENTS ===
 		// IO only tells us an element is near the trigger line. The RAF
@@ -607,6 +623,14 @@ class LineObserver {
 	startLoop() {
 		if (!this.isRunning) {
 			this.isRunning = true;
+
+			// The page may have moved while the loop was stopped. Record
+			// which way before the position is brought up to date.
+			if (window.scrollY !== this.lastScrollY) {
+				this.currentDirection =
+					window.scrollY > this.lastScrollY ? 'down' : 'up';
+			}
+
 			this.lastScrollY = window.scrollY;
 			this.rafId = requestAnimationFrame(this.tick);
 		}

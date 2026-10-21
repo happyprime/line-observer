@@ -2679,3 +2679,141 @@ describe('_shouldSuppressTransition direct tests', () => {
 		).toBe(true);
 	});
 });
+
+describe('a jump that ends at rest', () => {
+	let observer;
+	let first;
+	let second;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const scrollTo = (value) => {
+		Object.defineProperty(window, 'scrollY', {
+			value,
+			configurable: true,
+		});
+	};
+
+	beforeEach(() => {
+		observer = new LineObserver({ triggerLine: '50vh' });
+		first = document.createElement('div');
+		second = document.createElement('div');
+		document.body.append(first, second);
+	});
+
+	afterEach(() => {
+		first.remove();
+		second.remove();
+		observer.destroy();
+	});
+
+	it('should activate an element reported near after the tick that saw the jump', () => {
+		const onActivate = vi.fn();
+
+		// The line is at 500. The first element lies across it, the second
+		// is far below.
+		place(first, 400, 700);
+		place(second, 1300, 1700);
+
+		observer.register(first);
+		observer.register(second, { onActivate });
+
+		const firstInstance = observer.instances.get(first);
+		const secondInstance = observer.instances.get(second);
+
+		observer.handleIntersection([{ isIntersecting: true }], firstInstance);
+		expect(observer.isActive()).toBe(true);
+
+		// The page jumps 1000px in one move. The second element now lies
+		// across the line and the first is well past it.
+		scrollTo(1000);
+		place(first, -600, -300);
+		place(second, 300, 700);
+
+		// This tick sees the jump, but IntersectionObserver has not yet
+		// said the second element is near.
+		observer.tick();
+		expect(firstInstance.state).toBe('passed');
+		expect(onActivate).not.toHaveBeenCalled();
+
+		// Now it does, with the page at rest.
+		observer.handleIntersection([{ isIntersecting: true }], secondInstance);
+		observer.tick();
+
+		expect(onActivate).toHaveBeenCalledWith(second, secondInstance);
+		expect(secondInstance.state).toBe('active');
+	});
+
+	it('should still skip work when the page is at rest and nothing new is near', () => {
+		place(first, 600, 900);
+		observer.register(first);
+
+		const instance = observer.instances.get(first);
+
+		observer.handleIntersection([{ isIntersecting: true }], instance);
+		observer.tick();
+
+		first.getBoundingClientRect.mockClear();
+		observer.tick();
+		observer.tick();
+
+		expect(first.getBoundingClientRect).not.toHaveBeenCalled();
+	});
+
+	it('should keep the direction of the jump for a pass made at rest', () => {
+		const onActivate = vi.fn();
+
+		place(first, 400, 700);
+		place(second, 1300, 1700);
+
+		observer.register(first);
+		observer.register(second, { activateFrom: 'below', onActivate });
+
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(first)
+		);
+
+		scrollTo(1000);
+		place(first, -600, -300);
+		place(second, 300, 700);
+		observer.tick();
+
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(second)
+		);
+		observer.tick();
+
+		// The page moved down to get here, so an element that activates
+		// only from below still does.
+		expect(observer.getDirection()).toBe('down');
+		expect(onActivate).toHaveBeenCalledTimes(1);
+	});
+
+	it('should record which way the page moved while the loop was stopped', () => {
+		const onActivate = vi.fn();
+
+		// Nothing is near, so the loop is not running. Its last direction
+		// was up.
+		place(first, 1300, 1700);
+		observer.register(first, { activateFrom: 'below', onActivate });
+		observer.currentDirection = 'up';
+		expect(observer.isActive()).toBe(false);
+
+		// The page jumps down and rests with the element across the line.
+		scrollTo(1000);
+		place(first, 300, 700);
+
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(first)
+		);
+		observer.tick();
+
+		expect(observer.getDirection()).toBe('down');
+		expect(onActivate).toHaveBeenCalledTimes(1);
+	});
+});
