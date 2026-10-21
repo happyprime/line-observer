@@ -30,7 +30,7 @@
 	<div class="trigger-line"></div>
 
 	<aside class="panel">
-		<p><a href="index.html">All demos</a>. Nothing is near the line on the way, so the loop is stopped between jumps. From the top, take End, then Boxes: the last move was up, so only the "above" box should activate. From the end, take Top, then Boxes: only the "below" box should. Scroll until the line is just past the boxes, then take "Line 100px into the boxes": the loop is running this time, and only the "above" box should activate.</p>
+		<p><a href="index.html">All demos</a>. Nothing is near the line on the way, so the loop is stopped between jumps. From the top, take End, then Boxes: the last move was up, so only the "above" box should activate. From the end, take Top, then Boxes: only the "below" box should. Scroll until the line is just past the boxes, then take "Line 100px into the boxes": only the "above" box should activate. The check takes this link while the loop runs; by hand, the loop has stopped by the time you click.</p>
 		<nav>
 			<a href="#top">Top</a>
 			<a href="#end">End</a>
@@ -157,14 +157,23 @@
 				},
 			},
 			{
-				// The boxes are near, so the loop runs through this jump.
 				name: 'Anchor link up onto the boxes from just past them',
 				run: async () => {
 					await jump(0);
 					start();
-					await jump(lineInto(boxes, 650));
+					await jump(lineInto(boxes, 640));
+
+					// The loop stops once the page is still. A 10px scroll
+					// starts it again, so it runs through the jump.
+					window.scrollTo({ top: lineInto(boxes, 650), behavior: 'instant' });
+					await waitFrames(1);
+					const running = observer.isActive();
+
 					await follow('#mark');
-					return { expected: cameUp, actual: actual() };
+					return {
+						expected: { ...cameUp, running: true },
+						actual: { ...actual(), running },
+					};
 				},
 			},
 		]);
