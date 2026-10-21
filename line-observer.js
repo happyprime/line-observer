@@ -74,6 +74,9 @@ class LineObserver {
 		this.lastScrollY = window.scrollY;
 		this.currentDirection = 'down';
 
+		// The scroll position trackDirection() last saw.
+		this.directionScrollY = window.scrollY;
+
 		// Instances IO has reported since the last pass. IO reports in the
 		// frame after the page moves, so after a jump that ends at rest,
 		// these elements still need a pass.
@@ -82,10 +85,18 @@ class LineObserver {
 		// Bind methods
 		this.tick = this.tick.bind(this);
 		this.handleResize = this.handleResize.bind(this);
+		this.trackDirection = this.trackDirection.bind(this);
 
 		// Resize handling (debounced)
 		this.resizeTimeout = null;
 		window.addEventListener('resize', this.handleResize, { passive: true });
+
+		// The loop stops when nothing is near the line, but the page can
+		// move several times before it starts again. Each move sets the
+		// direction, not the net move since the loop stopped.
+		window.addEventListener('scroll', this.trackDirection, {
+			passive: true,
+		});
 
 		// Cache viewport dimensions
 		this.viewportHeight = window.innerHeight;
@@ -551,10 +562,9 @@ class LineObserver {
 			return;
 		}
 
-		// A pass at rest keeps the direction of the last move.
-		if (moved) {
-			this.currentDirection = scrollY > this.lastScrollY ? 'down' : 'up';
-		}
+		// After an anchor jump, Chromium runs this frame's RAF callbacks
+		// before the scroll event, so the direction can be one move behind.
+		this.trackDirection();
 
 		// === READ PHASE ===
 		const transitions = [];
@@ -616,16 +626,25 @@ class LineObserver {
 	startLoop() {
 		if (!this.isRunning) {
 			this.isRunning = true;
-
-			// The page may have moved while the loop was stopped. Record
-			// which way before the position is brought up to date.
-			if (window.scrollY !== this.lastScrollY) {
-				this.currentDirection =
-					window.scrollY > this.lastScrollY ? 'down' : 'up';
-			}
-
 			this.lastScrollY = window.scrollY;
 			this.rafId = requestAnimationFrame(this.tick);
+		}
+	}
+
+	/**
+	 * Records which way the page moved since the last call.
+	 *
+	 * This is the passive scroll listener, so it only reads and compares.
+	 *
+	 * @private
+	 */
+	trackDirection() {
+		const scrollY = window.scrollY;
+
+		if (scrollY !== this.directionScrollY) {
+			this.currentDirection =
+				scrollY > this.directionScrollY ? 'down' : 'up';
+			this.directionScrollY = scrollY;
 		}
 	}
 
@@ -749,6 +768,7 @@ class LineObserver {
 		this.reportedInstances.clear();
 
 		window.removeEventListener('resize', this.handleResize);
+		window.removeEventListener('scroll', this.trackDirection);
 	}
 }
 
