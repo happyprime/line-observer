@@ -74,9 +74,10 @@ class LineObserver {
 		this.lastScrollY = window.scrollY;
 		this.currentDirection = 'down';
 
-		// Set when an element comes near the trigger line, so the next
-		// tick works out its state even if the page has not moved since.
-		this.nearChanged = false;
+		// Instances IO has reported since the last pass. IO reports in the
+		// frame after the page moves, so after a jump that ends at rest,
+		// these elements still need a pass.
+		this.reportedInstances = new Set();
 
 		// Bind methods
 		this.tick = this.tick.bind(this);
@@ -191,8 +192,9 @@ class LineObserver {
 	 * Handle intersection changes — nearness detection only.
 	 *
 	 * IO fires when an element enters or leaves the wide band around the
-	 * trigger line. This method only manages the `nearInstances` set and
-	 * starts the RAF loop. Actual state transitions happen in `tick()`.
+	 * trigger line. This method only manages the `nearInstances` and
+	 * `reportedInstances` sets and starts the RAF loop. Actual state
+	 * transitions happen in `tick()`.
 	 *
 	 * @param {IntersectionObserverEntry[]} entries  - Array of intersection observer entries.
 	 * @param {Object}                      instance - The observer instance associated with the intersection.
@@ -207,13 +209,18 @@ class LineObserver {
 
 		if (entry.isIntersecting) {
 			this.nearInstances.add(instance);
-			// IntersectionObserver reports after the frame in which the page
-			// moved. By then tick() may have already spent that movement on
-			// the elements that were near before, so ask for one more pass.
-			this.nearChanged = true;
+			this.reportedInstances.add(instance);
 			this.startLoop();
 		} else {
 			this.nearInstances.delete(instance);
+
+			// Content above an active element can change height and move
+			// it out of the band with the page at rest. An element that is
+			// not active has nothing to do when it leaves. The loop runs
+			// while any element is active, so it needs no start here.
+			if (instance.state === 'active') {
+				this.reportedInstances.add(instance);
+			}
 		}
 	}
 
@@ -378,6 +385,7 @@ class LineObserver {
 		// Remove from tracking sets
 		this.activeInstances.delete(instance);
 		this.nearInstances.delete(instance);
+		this.reportedInstances.delete(instance);
 
 		// Remove class and custom property
 		element.classList.remove(instance.options.activeClass);
@@ -520,6 +528,9 @@ class LineObserver {
 	 * styles and callbacks. A read that follows a write in the same frame
 	 * makes the browser lay out the page again.
 	 *
+	 * With the page at rest, only an element IO has reported since the last
+	 * pass can have changed state, so a pass at rest reads only those.
+	 *
 	 * @private
 	 */
 	tick() {
@@ -528,57 +539,66 @@ class LineObserver {
 			(this.activeInstances.size === 0 && this.nearInstances.size === 0)
 		) {
 			this.isRunning = false;
+			this.reportedInstances.clear();
 			return;
 		}
 
 		const scrollY = window.scrollY;
+		const moved = scrollY !== this.lastScrollY;
 
-		// Skip all work if scroll position hasn't changed, unless an element
-		// has come near the trigger line since the last pass. A jump that
-		// ends at rest (an in-page link, Page Down, an instant scrollTo)
-		// leaves the page still by the time its elements are reported.
-		if (scrollY === this.lastScrollY && !this.nearChanged) {
+		if (!moved && this.reportedInstances.size === 0) {
 			this.rafId = requestAnimationFrame(this.tick);
 			return;
 		}
 
-		this.nearChanged = false;
-
-		// Update direction tracking. A pass asked for by a newly near
-		// element, with the page at rest, keeps the direction it had.
-		if (scrollY !== this.lastScrollY) {
+		// A pass at rest keeps the direction of the last move.
+		if (moved) {
 			this.currentDirection = scrollY > this.lastScrollY ? 'down' : 'up';
 		}
 
 		// === READ PHASE ===
 		const transitions = [];
-
-		for (const instance of this.nearInstances) {
+		const read = (instance) => {
 			const newState = this._readState(instance, scrollY);
 			if (newState) {
 				transitions.push({ instance, newState });
 			}
+		};
+
+		if (moved) {
+			this.nearInstances.forEach(read);
+
+			// A fast scroll can move an active element past the whole IO
+			// band between two frames, so active elements are read even
+			// when not near.
+			for (const instance of this.activeInstances) {
+				if (!this.nearInstances.has(instance)) {
+					read(instance);
+				}
+			}
+		} else {
+			this.reportedInstances.forEach(read);
 		}
 
-		// A fast scroll can move an active element past the whole IO band
-		// between two frames, so active elements are read even when not near.
-		for (const instance of this.activeInstances) {
-			if (this.nearInstances.has(instance)) {
-				continue;
-			}
-			const newState = this._readState(instance, scrollY);
-			if (newState) {
-				transitions.push({ instance, newState });
-			}
-		}
+		this.reportedInstances.clear();
 
 		// === WRITE PHASE ===
 		for (const { instance, newState } of transitions) {
 			this.transitionState(instance, newState);
 		}
 
-		for (const instance of this.activeInstances) {
-			this._writeOffset(instance, scrollY);
+		// At rest, an element that was already active keeps the offset it
+		// has, so only elements that activated in this pass get one.
+		if (moved) {
+			for (const instance of this.activeInstances) {
+				this._writeOffset(instance, scrollY);
+			}
+		} else {
+			for (const { instance, newState } of transitions) {
+				if (newState === 'active') {
+					this._writeOffset(instance, scrollY);
+				}
+			}
 		}
 
 		// Update tracking
@@ -726,6 +746,7 @@ class LineObserver {
 		this.instances.clear();
 		this.activeInstances.clear();
 		this.nearInstances.clear();
+		this.reportedInstances.clear();
 
 		window.removeEventListener('resize', this.handleResize);
 	}
