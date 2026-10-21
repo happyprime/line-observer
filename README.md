@@ -147,7 +147,7 @@ The `instance` object passed to `onActivate`, `onDeactivate`, and `onScroll` cal
 | `element` | `HTMLElement` | The observed DOM element. |
 | `options` | `object` | Merged options (constructor defaults + per-element overrides). |
 | `state` | `string` | Current state: `'inactive'`, `'active'`, or `'passed'`. |
-| `activationScrollY` | `number` | The `window.scrollY` value when the element was activated. |
+| `activationScrollY` | `number` | The `window.scrollY` value at which the element's top edge meets the trigger line, measured when the element activates. After a jump, this can be well before the position the element activated at. |
 | `elementHeight` | `number` | The element's `offsetHeight`, captured at activation. |
 | `triggerLinePx` | `number` | The trigger line position in pixels (computed from the `triggerLine` option). |
 
@@ -224,7 +224,7 @@ When `activateFrom` is `'above'`:
 
 ## The --scroll-offset CSS custom property
 
-When `cssCustomProperty` is `true` (the default), LineObserver sets `--scroll-offset` on each active element every animation frame. The value is the number of pixels scrolled since the element was activated.
+When `cssCustomProperty` is `true` (the default), LineObserver sets `--scroll-offset` on each active element every animation frame. The value is the distance in pixels from the element's top edge to the trigger line, so an element that activates after a jump starts at the distance already crossed, not at 0.
 
 ```css
 .observed {

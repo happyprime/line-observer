@@ -2162,8 +2162,8 @@ describe('activationScrollY precision', () => {
 		observer.destroy();
 	});
 
-	it('should set activationScrollY = scrollY when activating while scrolling down', () => {
-		const observer = new LineObserver({ triggerLine: '50vh' });
+	it('should measure activationScrollY from the rect when activating while scrolling down', () => {
+		const observer = new LineObserver({ triggerLine: '50vh' }); // 500px
 		const element = document.createElement('div');
 		document.body.appendChild(element);
 
@@ -2172,27 +2172,38 @@ describe('activationScrollY precision', () => {
 			top: 600,
 			bottom: 900,
 		});
+		Object.defineProperty(element, 'offsetHeight', {
+			value: 300,
+			configurable: true,
+		});
 
 		observer.register(element);
 		const instance = observer.instances.get(element);
-		expect(instance.state).toBe('inactive');
+		observer.nearInstances.add(instance);
 
-		// Scroll down — element crosses trigger
-		observer.currentDirection = 'down';
+		// A 200px scroll down leaves the line 20px into the element.
+		observer.lastScrollY = 0;
 		Object.defineProperty(window, 'scrollY', {
 			value: 200,
 			configurable: true,
 		});
-		observer.transitionState(instance, 'active', 200);
+		element.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: 480,
+			bottom: 780,
+		});
+		observer.tick();
 
-		expect(instance.activationScrollY).toBe(200);
+		expect(instance.state).toBe('active');
+		// 200 - (500 - 480)
+		expect(instance.activationScrollY).toBe(180);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('20');
 
 		document.body.removeChild(element);
 		observer.destroy();
 	});
 
-	it('should set activationScrollY = scrollY - elementHeight when activating while scrolling up', () => {
-		const observer = new LineObserver({ triggerLine: '50vh' });
+	it('should measure activationScrollY from the rect when activating while scrolling up', () => {
+		const observer = new LineObserver({ triggerLine: '50vh' }); // 500px
 		const element = document.createElement('div');
 		document.body.appendChild(element);
 
@@ -2209,23 +2220,30 @@ describe('activationScrollY precision', () => {
 		observer.register(element);
 		const instance = observer.instances.get(element);
 		expect(instance.state).toBe('passed');
+		observer.nearInstances.add(instance);
 
-		// Scroll up — element drops back to span trigger
-		observer.currentDirection = 'up';
+		// A 100px scroll up leaves the line 250px into the element.
+		observer.lastScrollY = 600;
 		Object.defineProperty(window, 'scrollY', {
 			value: 500,
 			configurable: true,
 		});
-		observer.transitionState(instance, 'active', 500);
+		element.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: 250,
+			bottom: 550,
+		});
+		observer.tick();
 
-		// scrollY(500) - elementHeight(300) = 200
-		expect(instance.activationScrollY).toBe(200);
+		expect(instance.state).toBe('active');
+		// 500 - (500 - 250)
+		expect(instance.activationScrollY).toBe(250);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('250');
 
 		document.body.removeChild(element);
 		observer.destroy();
 	});
 
-	it('should override activationScrollY with precise formula on resize', () => {
+	it('should set precise activationScrollY on resize', () => {
 		vi.useFakeTimers();
 		const observer = new LineObserver({ triggerLine: '50vh' }); // 500px
 		const element = document.createElement('div');
@@ -2815,5 +2833,233 @@ describe('a jump that ends at rest', () => {
 
 		expect(observer.getDirection()).toBe('down');
 		expect(onActivate).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe('activation after a jump', () => {
+	let observer;
+	let element;
+
+	const place = (top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const scrollTo = (value) => {
+		Object.defineProperty(window, 'scrollY', {
+			value,
+			configurable: true,
+		});
+	};
+
+	beforeEach(() => {
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		element = document.createElement('div');
+		Object.defineProperty(element, 'offsetHeight', {
+			value: 450,
+			configurable: true,
+		});
+		document.body.append(element);
+	});
+
+	afterEach(() => {
+		element.remove();
+		observer.destroy();
+	});
+
+	it('should count the offset from the top edge after a jump down', () => {
+		const onScroll = vi.fn();
+
+		// The element sits just below the line, inside the IO band.
+		place(550, 1000);
+		observer.register(element, { onScroll });
+		const instance = observer.instances.get(element);
+		observer.handleIntersection([{ isIntersecting: true }], instance);
+		observer.tick();
+
+		// A 400px jump down leaves the line 350px into the element.
+		scrollTo(400);
+		place(150, 600);
+		observer.tick();
+
+		expect(instance.state).toBe('active');
+		expect(instance.activationScrollY).toBe(50);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('350');
+		expect(onScroll).toHaveBeenCalledTimes(1);
+		expect(onScroll).toHaveBeenCalledWith(350, element, instance);
+	});
+
+	it('should count the offset from the top edge after a jump up', () => {
+		const onScroll = vi.fn();
+
+		// The element has passed the line.
+		scrollTo(1000);
+		place(50, 500);
+		observer.register(element, { onScroll });
+		const instance = observer.instances.get(element);
+		expect(instance.state).toBe('passed');
+		observer.handleIntersection([{ isIntersecting: true }], instance);
+		observer.tick();
+
+		// A 400px jump up leaves the line 50px into the element.
+		scrollTo(600);
+		place(450, 900);
+		observer.tick();
+
+		expect(instance.state).toBe('active');
+		expect(instance.activationScrollY).toBe(550);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('50');
+		expect(onScroll).toHaveBeenCalledTimes(1);
+		expect(onScroll).toHaveBeenCalledWith(50, element, instance);
+	});
+
+	it('should write the offset in the pass that activates an element at rest', () => {
+		const onScroll = vi.fn();
+
+		// The element is far below the line, so the loop is not running.
+		place(1300, 1750);
+		observer.register(element, { onScroll });
+		const instance = observer.instances.get(element);
+
+		// The page jumps 1000px and rests. IO then reports the element.
+		scrollTo(1000);
+		place(300, 750);
+		observer.handleIntersection([{ isIntersecting: true }], instance);
+		observer.tick();
+
+		expect(instance.state).toBe('active');
+		expect(instance.activationScrollY).toBe(800);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('200');
+		expect(onScroll).toHaveBeenCalledWith(200, element, instance);
+	});
+});
+
+describe('read and write order', () => {
+	let observer;
+	let elements;
+	let log;
+
+	// Logs every rect and height read, and every class, style and
+	// callback write, on one element.
+	const watch = (element, rects, height) => {
+		element.getBoundingClientRect = () => {
+			log.push(`read rect ${element.id}`);
+			return rects[element.id];
+		};
+		Object.defineProperty(element, 'offsetHeight', {
+			configurable: true,
+			get: () => {
+				log.push(`read height ${element.id}`);
+				return height;
+			},
+		});
+		for (const method of ['add', 'remove']) {
+			const original = element.classList[method].bind(element.classList);
+			element.classList[method] = (...args) => {
+				log.push(`write class ${element.id}`);
+				return original(...args);
+			};
+		}
+		const setProperty = element.style.setProperty.bind(element.style);
+		element.style.setProperty = (...args) => {
+			log.push(`write style ${element.id}`);
+			return setProperty(...args);
+		};
+	};
+
+	const callbacks = (element) => ({
+		onActivate: () => log.push(`write onActivate ${element.id}`),
+		onDeactivate: () => log.push(`write onDeactivate ${element.id}`),
+		onScroll: () => log.push(`write onScroll ${element.id}`),
+	});
+
+	const readsAfterFirstWrite = () => {
+		const first = log.findIndex((entry) => entry.startsWith('write'));
+		return log.slice(first).filter((entry) => entry.startsWith('read'));
+	};
+
+	beforeEach(() => {
+		observer = new LineObserver({ triggerLine: '50vh' }); // 500px
+		log = [];
+		elements = ['a', 'b', 'c', 'd'].map((id) => {
+			const element = document.createElement('div');
+			element.id = id;
+			document.body.append(element);
+			return element;
+		});
+	});
+
+	afterEach(() => {
+		elements.forEach((element) => element.remove());
+		observer.destroy();
+	});
+
+	it('should read every rect and height before the first write in a tick', () => {
+		const [a, b, c, d] = elements;
+		const rects = {
+			a: { top: 300, bottom: 900 }, // active, stays active, not near
+			b: { top: 550, bottom: 850 }, // near, activates
+			c: { top: 560, bottom: 860 }, // near, activates
+			d: { top: 200, bottom: 600 }, // active and near, passes the line
+		};
+
+		for (const element of elements) {
+			watch(element, rects, 300);
+			observer.register(element, callbacks(element));
+		}
+		for (const element of [b, c, d]) {
+			observer.nearInstances.add(observer.instances.get(element));
+		}
+
+		// Scroll 150px down.
+		observer.lastScrollY = 0;
+		Object.defineProperty(window, 'scrollY', {
+			value: 150,
+			configurable: true,
+		});
+		rects.a = { top: 150, bottom: 750 };
+		rects.b = { top: 400, bottom: 700 };
+		rects.c = { top: 410, bottom: 710 };
+		rects.d = { top: 50, bottom: 450 };
+
+		log = [];
+		observer.tick();
+
+		expect(observer.instances.get(a).state).toBe('active');
+		expect(observer.instances.get(b).state).toBe('active');
+		expect(observer.instances.get(c).state).toBe('active');
+		expect(observer.instances.get(d).state).toBe('passed');
+		expect(log).toContain('read height c');
+		expect(log).toContain('write onScroll a');
+		expect(readsAfterFirstWrite()).toEqual([]);
+	});
+
+	it('should read every rect and height before the first write on resize', () => {
+		vi.useFakeTimers();
+		const [a, b] = elements;
+		const rects = {
+			a: { top: 600, bottom: 900 },
+			b: { top: 650, bottom: 950 },
+		};
+
+		for (const element of [a, b]) {
+			watch(element, rects, 300);
+			observer.register(element, callbacks(element));
+		}
+
+		// A taller viewport moves the line across both elements.
+		Object.defineProperty(window, 'innerHeight', {
+			value: 1400,
+			configurable: true,
+		});
+
+		log = [];
+		observer.handleResize();
+		vi.advanceTimersByTime(200);
+		vi.useRealTimers();
+
+		expect(observer.instances.get(a).state).toBe('active');
+		expect(observer.instances.get(b).state).toBe('active');
+		expect(readsAfterFirstWrite()).toEqual([]);
 	});
 });
