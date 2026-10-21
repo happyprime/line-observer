@@ -45,7 +45,7 @@
     "jsdom": "^28.1.0",
     "rollup": "^4.59.0",
     "terser": "^5.46.0",
-    "vitest": "^4.0.18"
+    "vitest": "^5.0.5"
   },
   "bugs": {
     "url": "https://github.com/happyprime/line-observer/issues"
