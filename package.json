@@ -4,10 +4,15 @@
   "description": "A performant scroll interaction observer that triggers handlers when elements cross a configurable trigger line in the viewport",
   "type": "module",
   "module": "line-observer.js",
+  "unpkg": "build/line-observer.js",
+  "jsdelivr": "build/line-observer.js",
   "exports": {
     ".": {
-      "import": "./line-observer.js"
-    }
+      "import": "./line-observer.js",
+      "default": "./line-observer.js"
+    },
+    "./build/*": "./build/*",
+    "./package.json": "./package.json"
   },
   "files": [
     "line-observer.js",
