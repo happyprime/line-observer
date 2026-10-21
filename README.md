@@ -20,34 +20,102 @@ npm install @happyprime/line-observer
 import LineObserver from '@happyprime/line-observer';
 ```
 
+The package also exports the minified build, as `@happyprime/line-observer/build/line-observer.js`.
+
 ### Script tag
 
+`build/line-observer.js` is a classic script that sets `window.LineObserver`. Load it before the script that uses it:
+
 ```html
-<script src="path/to/line-observer.js" type="module"></script>
+<script src="path/to/build/line-observer.js"></script>
 <script>
   const observer = new LineObserver();
 </script>
 ```
 
-When loaded via script tag, `LineObserver` is available as `window.LineObserver`.
+`line-observer.js` is an ES module. Import it in a module script:
+
+```html
+<script type="module">
+  import LineObserver from './path/to/line-observer.js';
+
+  const observer = new LineObserver();
+</script>
+```
+
+Don't load `line-observer.js` with `<script type="module" src="…">` and use it from a classic script. Module scripts are deferred, so the classic script runs first and throws `ReferenceError: LineObserver is not defined`.
+
+### WordPress
+
+Copy `build/line-observer.js` into the theme. Enqueue it, then a theme script that lists it as a dependency, both with `defer`:
+
+```php
+add_action(
+	'wp_enqueue_scripts',
+	function () {
+		$version = wp_get_theme()->get( 'Version' );
+		$args    = array(
+			'strategy'  => 'defer',
+			'in_footer' => true,
+		);
+
+		wp_enqueue_script( 'line-observer', get_theme_file_uri( 'js/line-observer.js' ), array(), $version, $args );
+		wp_enqueue_script( 'theme-scroll', get_theme_file_uri( 'js/scroll.js' ), array( 'line-observer' ), $version, $args );
+	}
+);
+```
+
+```js
+// js/scroll.js
+const observer = new LineObserver();
+
+document.querySelectorAll('.observed').forEach((element) => {
+  observer.register(element);
+});
+```
+
+Keep the setup in its own file. `wp_add_inline_script( 'line-observer', …, 'after' )` makes WordPress drop `defer` from `line-observer`.
+
+A theme built with `@wordpress/scripts` can import the package instead and enqueue only its own bundle.
 
 ## Quick start
 
+```html
+<section class="observed">
+  <div class="observed__inner">…</div>
+</section>
+```
+
+```css
+/* The start state. */
+.observed__inner {
+  opacity: 0.3;
+}
+```
+
 ```js
-const observer = new LineObserver({ triggerLine: '50vh' });
+const observer = new LineObserver({
+  triggerLine: '50vh',
+  cssCustomProperty: false, // Callbacks only, so skip --scroll-offset.
+});
 
 document.querySelectorAll('.observed').forEach((el) => {
+  const inner = el.querySelector('.observed__inner');
+
   observer.register(el, {
-    activeClass: 'is-active',
     onActivate: (element) => console.log('Activated', element),
     onDeactivate: (element) => console.log('Deactivated', element),
-    onScroll: (offset, element, instance) => {
-      const progress = offset / instance.elementHeight;
-      element.style.opacity = Math.min(1, progress);
+    onScroll: (offset) => {
+      // 0.3 at the line, 1 from 200px past it.
+      inner.style.opacity = 0.3 + 0.7 * Math.min(1, offset / 200);
     },
   });
 });
 ```
+
+`onScroll` runs when an element activates, in each frame it moves while active, and once more as it leaves, with the offset it holds: its height past the line, `0` below it. So the child ends at full opacity past the line, also when the page loads past it, and goes back to 0.3 below it.
+
+A page can use several observers. They share one loop, which reads every element before it writes to any.
 
 ## Constructor options
 
@@ -76,7 +144,7 @@ const observer = new LineObserver({
 | `once` | `boolean` | `false` | When true, the element activates the first time it reaches the line, or is found past it, and then LineObserver stops observing it. It keeps `activeClass`, its values are written once, and `onDeactivate` never runs. See [Reveal once](#reveal-once). |
 | `activateFrom` | `string` | `'both'` | Which side the element crosses the trigger line from to activate: `'below'` (scrolling down), `'above'` (scrolling up), or `'both'`. |
 | `nearMargin` | `number \| string` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling, and a second IntersectionObserver reports elements that cross the line without entering the band. Elements with the same trigger line and `nearMargin` share both IntersectionObservers. |
-| `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` and `--scroll-progress` on each element when its values change. Set to false if you only use callbacks. |
+| `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` and `--scroll-progress` on each element when its values change. Both inherit, so the browser restyles every element inside, even if no CSS reads them. Set to `false` if you only use callbacks. |
 | `onActivate` | `function \| null` | `null` | Called when an element crosses the trigger line and becomes active, or is found past it. Receives `(element, instance)`. |
 | `onDeactivate` | `function \| null` | `null` | Called when an element leaves the active zone. Receives `(element, instance)`. |
 | `onScroll` | `function \| null` | `null` | Called when the element activates, in each frame in which an active element's offset or progress changes, and once more with the value it holds when it leaves the active zone, before `onDeactivate`. Receives `(offset, element, instance)`. |
@@ -296,17 +364,21 @@ When `cssCustomProperty` is `true` (the default), LineObserver sets `--scroll-of
 
 The offset comes from the element's position, not from `window.scrollY`. Scroll anchoring that moves the page when content above it changes, or a scroll lock that sets `scrollY` to `0`, leaves it alone.
 
-```css
-.observed {
-  transform: translateY(calc(var(--scroll-offset, 0) * -0.5px));
-}
+The value is a number with no unit. Multiply it to get a length: `calc(var(--scroll-offset, 0) * 1px)`. A bare `translateX(var(--scroll-offset))` is invalid, so the transform computes to `none`.
 
-.observed.is-active {
-  opacity: calc(var(--scroll-offset, 0) / 500);
+Style a child of the observed element, and give the base rule the start state. With the quick start's markup:
+
+```css
+/* At the line: 0.3 opacity, in place. From 200px past it: full opacity, 60px up. */
+.observed__inner {
+  opacity: clamp(0.3, var(--scroll-offset, 0) / 200, 1);
+  transform: translateY(calc(min(var(--scroll-offset, 0), 200) * -0.3px));
 }
 ```
 
-When the element leaves the active zone, the property holds the value it left with: the element's height once its bottom edge passes the line, or `0` once its top edge drops back below it. It is removed when the element is unregistered or the observer is destroyed.
+Don't transform the observed element itself, from `--scroll-offset` or from `.is-active`. LineObserver measures it with `getBoundingClientRect()`, which includes transforms, so moving it moves the box being measured, and its state can flip back and forth near the line.
+
+When the element leaves the active zone, the property holds the value it left with: the element's height once its bottom edge passes the line, or `0` once its top edge drops back below it. So the child above stays at full opacity and 60px up past the line, also when the page loads past it, and returns to its start state below the line. The property is removed when the element is unregistered or the observer is destroyed.
 
 ### --scroll-progress
 
@@ -330,7 +402,9 @@ Style a child of the observed element with it:
 }
 ```
 
-To disable this behavior, set `cssCustomProperty` to `false`:
+### What the properties cost
+
+`--scroll-offset` and `--scroll-progress` inherit, and change on each active element in every frame it moves, so the browser restyles everything inside an observed element, whether or not CSS reads them. In Chromium 156, scrolling through 10 elements with 200 descendants each took 55ms of style recalculation, and none with `cssCustomProperty: false`. Observe elements with few descendants, or turn the properties off and use `onScroll`:
 
 ```js
 observer.register(el, {
