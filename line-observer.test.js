@@ -3493,6 +3493,141 @@ describe('direction while the loop is stopped', () => {
 	});
 });
 
+describe('small moves and the direction', () => {
+	let observer;
+	let below;
+	let above;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const placeBoth = (top, bottom) => {
+		place(below, top, bottom);
+		place(above, top, bottom);
+	};
+
+	// Moves the page, as a scroll event and the frame after it.
+	const scrollAndFrame = (scrollY, top, bottom) => {
+		placeBoth(top, bottom);
+		scrollWindowTo(scrollY);
+		frame();
+	};
+
+	const stateOf = (element) => observer.instances.get(element).state;
+
+	const setDevicePixelRatio = (value) => {
+		Object.defineProperty(window, 'devicePixelRatio', {
+			value,
+			configurable: true,
+			writable: true,
+		});
+	};
+
+	beforeEach(() => {
+		below = document.createElement('div');
+		above = document.createElement('div');
+		document.body.append(below, above);
+		setDevicePixelRatio(1);
+	});
+
+	afterEach(() => {
+		below.remove();
+		above.remove();
+		observer.destroy();
+		setDevicePixelRatio(1);
+	});
+
+	// The line is at 500. Both 600px boxes start just past it, as in
+	// demos/jump-direction.html, and IO reports them near.
+	const startPastBoth = (scrollY) => {
+		scrollWindowTo(scrollY - 10);
+		observer = new LineObserver({ triggerLine: '50vh' });
+		placeBoth(-140, 460);
+		observer.register(below, { activateFrom: 'below' });
+		observer.register(above, { activateFrom: 'above' });
+		for (const element of [below, above]) {
+			observer.handleIntersection(
+				[{ isIntersecting: true }],
+				observer.instances.get(element)
+			);
+		}
+		scrollAndFrame(scrollY, -150, 450);
+	};
+
+	it('should keep the direction of an anchor jump up that ends 1px down', () => {
+		// Firefox goes to an anchor at 459.5 in two steps: 459, then 460.
+		startPastBoth(1009);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollAndFrame(459, 400.5, 1000.5);
+		scrollAndFrame(460, 400, 1000);
+
+		expect(observer.getDirection()).toBe('up');
+		expect(stateOf(above)).toBe('active');
+		expect(stateOf(below)).toBe('passed');
+		expect(below.classList.contains('is-active')).toBe(false);
+
+		// The 1px move still ran a pass.
+		expect(observer.instances.get(above).offset).toBe(100);
+		expect(above.style.getPropertyValue('--scroll-offset')).toBe('100');
+	});
+
+	it('should keep the direction when a step of one device pixel is more than 1px', () => {
+		// Firefox at 90% zoom: 458.95, then 460.0667. The step is 1.1167px,
+		// a little more than one device pixel.
+		setDevicePixelRatio(0.9);
+		startPastBoth(1009.4667);
+
+		scrollAndFrame(458.95, 401.05, 1001.05);
+		scrollAndFrame(460.0667, 399.9333, 999.9333);
+
+		expect(observer.getDirection()).toBe('up');
+		expect(stateOf(below)).toBe('passed');
+	});
+
+	it('should set the direction after slow 1px steps add up', () => {
+		observer = new LineObserver({ triggerLine: '50vh' });
+		scrollWindowTo(1000);
+		scrollWindowTo(900);
+		expect(observer.getDirection()).toBe('up');
+
+		scrollWindowTo(901);
+		expect(observer.getDirection()).toBe('up');
+
+		scrollWindowTo(902);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollWindowTo(903);
+		scrollWindowTo(904);
+		expect(observer.getDirection()).toBe('down');
+	});
+
+	it('should change the direction on a 2px move back', () => {
+		observer = new LineObserver({ triggerLine: '50vh' });
+		scrollWindowTo(1000);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollWindowTo(998);
+		expect(observer.getDirection()).toBe('up');
+
+		scrollWindowTo(1000);
+		expect(observer.getDirection()).toBe('down');
+	});
+
+	it('should hold the direction through 1px moves back at a high device pixel ratio', () => {
+		setDevicePixelRatio(3);
+		observer = new LineObserver({ triggerLine: '50vh' });
+		scrollWindowTo(1000);
+
+		scrollWindowTo(999);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollWindowTo(998.5);
+		expect(observer.getDirection()).toBe('up');
+	});
+});
+
 describe('a callback that throws', () => {
 	let observer;
 	let a;

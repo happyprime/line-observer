@@ -32,6 +32,12 @@
 // than one, so a scroll that skips a frame does not stop and restart it.
 const STILL_FRAMES = 2;
 
+// A move must be more than 1px, and more than this many device pixels, to
+// change the direction. Firefox can scroll to an anchor at a fractional
+// position in two steps, one device pixel apart: 1px at 100% zoom, 1.25px at
+// 80%. With rounding, the step can be a little more than one device pixel.
+const DIRECTION_DEVICE_PIXELS = 1.5;
+
 // How far above the viewport the edge observer's root reaches, in px. An
 // element higher than this reads as below the line to that observer.
 // Chromium clamps a larger margin to 33,554,432px.
@@ -278,7 +284,7 @@ class LineObserver {
 		this.currentDirection = 'down';
 		this.stillFrames = 0;
 
-		// The scroll position trackDirection() last saw.
+		// The scroll position trackDirection() measures the next move from.
 		this.directionScrollY = window.scrollY;
 
 		// Instances IO has reported since the last pass. IO reports in the
@@ -1195,7 +1201,14 @@ class LineObserver {
 	}
 
 	/**
-	 * Records which way the page moved since the last call, and starts the loop.
+	 * Records which way the page moved, and starts the loop.
+	 *
+	 * The move is measured from the position where the direction was last
+	 * set. A move of 1px or less, or of `DIRECTION_DEVICE_PIXELS` device
+	 * pixels or less, changes nothing, so Firefox's second step onto an
+	 * anchor does not reverse the jump to it. Small moves the same way add
+	 * up, so a slow scroll still sets the direction. Every move starts the
+	 * loop.
 	 *
 	 * It runs on every scroll event, so it only compares and requests a
 	 * frame. It also runs in `_readFrame()`, while the loop runs, so the
@@ -1205,9 +1218,14 @@ class LineObserver {
 	 * @private
 	 */
 	trackDirection(scrollY) {
-		if (scrollY !== this.directionScrollY) {
-			this.currentDirection =
-				scrollY > this.directionScrollY ? 'down' : 'up';
+		const move = scrollY - this.directionScrollY;
+		const minMove = Math.max(
+			1,
+			DIRECTION_DEVICE_PIXELS / (window.devicePixelRatio || 1)
+		);
+
+		if (Math.abs(move) > minMove) {
+			this.currentDirection = move > 0 ? 'down' : 'up';
 			this.directionScrollY = scrollY;
 		}
 

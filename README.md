@@ -485,7 +485,7 @@ observer.isActive(); // true
 
 ### getDirection()
 
-Returns the direction of the last scroll: `'up'` or `'down'`. A passive `scroll` listener records it, so it stays current while the animation loop is stopped.
+Returns the direction of the last scroll: `'up'` or `'down'`. A passive `scroll` listener records it, so it stays current while the animation loop is stopped. A move of 1px or less, or of 1.5 device pixels or less, doesn't change it. Firefox can scroll to an anchor at a fractional position in two steps, one device pixel apart, and the second step must not reverse the jump. Small moves the same way add up.
 
 ```js
 observer.getDirection(); // 'down'
