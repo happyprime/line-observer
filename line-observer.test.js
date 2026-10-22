@@ -3802,6 +3802,44 @@ describe('a callback that throws', () => {
 	});
 });
 
+describe('this in a callback', () => {
+	it("should be the element's merged options, as in 0.0.1", () => {
+		const observer = new LineObserver({
+			triggerLine: '50vh',
+			activeClass: 'in-view',
+		});
+		const element = document.createElement('div');
+		document.body.append(element);
+		const receivers = [];
+
+		// Past the line at register(), so all three callbacks run.
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top: 100, bottom: 400 });
+		observer.register(element, {
+			onActivate() {
+				receivers.push(['onActivate', this]);
+			},
+			onScroll() {
+				receivers.push(['onScroll', this]);
+			},
+			onDeactivate() {
+				receivers.push(['onDeactivate', this.activeClass]);
+			},
+		});
+
+		const { options } = observer.instances.get(element);
+		expect(receivers).toEqual([
+			['onActivate', options],
+			['onScroll', options],
+			['onDeactivate', 'in-view'],
+		]);
+		expect(receivers[0][1]).toBe(options);
+		expect(receivers[1][1]).toBe(options);
+		element.remove();
+	});
+});
+
 describe('a callback that unregisters or destroys', () => {
 	let observer;
 	let a;

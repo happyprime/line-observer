@@ -505,6 +505,8 @@ The `instance` object passed to `onActivate`, `onDeactivate`, and `onScroll` cal
 | `elementHeight` | `number` | The element's height, read from the same `getBoundingClientRect()` as `offset`. |
 | `triggerLinePx` | `number` | The trigger line position in pixels (computed from the `triggerLine` option). |
 
+A callback that isn't an arrow function gets `instance.options` as `this`.
+
 ```js
 observer.register(el, {
   onScroll: (offset, element, instance) => {

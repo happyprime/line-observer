@@ -687,7 +687,10 @@ class LineObserver {
 	}
 
 	/**
-	 * Calls a user callback and reports an error it throws.
+	 * Calls a callback option, if set, as a method of the options, and reports an error it throws.
+	 *
+	 * A callback that is not an arrow function reads the options through
+	 * `this`, and code written for 0.0.1 relies on it.
 	 *
 	 * An uncaught error would leave the scheduler's frame before it requests
 	 * the next one. Every running observer keeps `isRunning` true, so
@@ -697,13 +700,18 @@ class LineObserver {
 	 * `reportError()` fires the window `error` event, as an uncaught error
 	 * does, so error trackers still see it.
 	 *
-	 * @param {Function} callback - The user callback.
-	 * @param {...*}     args     - Arguments for the callback.
+	 * @param {Object} options - The element's merged options.
+	 * @param {string} name    - The callback's option name.
+	 * @param {...*}   args    - Arguments for the callback.
 	 * @private
 	 */
-	_call(callback, ...args) {
+	_call(options, name, ...args) {
+		if (!options[name]) {
+			return;
+		}
+
 		try {
-			callback(...args);
+			options[name](...args);
 		} catch (error) {
 			if (typeof window.reportError === 'function') {
 				window.reportError(error);
@@ -761,9 +769,7 @@ class LineObserver {
 			element.classList.add(options.activeClass);
 			this.activeInstances.add(instance);
 
-			if (options.onActivate) {
-				this._call(options.onActivate, element, instance);
-			}
+			this._call(options, 'onActivate', element, instance);
 		} else if (oldState === 'active') {
 			// Leaving active state
 			element.classList.remove(options.activeClass);
@@ -775,8 +781,8 @@ class LineObserver {
 			this._writeValues(instance);
 
 			// onScroll can unregister the element.
-			if (options.onDeactivate && this._isRegistered(instance)) {
-				this._call(options.onDeactivate, element, instance);
+			if (this._isRegistered(instance)) {
+				this._call(options, 'onDeactivate', element, instance);
 			}
 		}
 	}
@@ -1085,9 +1091,7 @@ class LineObserver {
 			element.style.setProperty('--scroll-progress', progress);
 		}
 
-		if (options.onScroll) {
-			this._call(options.onScroll, offset, element, instance);
-		}
+		this._call(options, 'onScroll', offset, element, instance);
 	}
 
 	/**
