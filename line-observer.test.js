@@ -5276,8 +5276,29 @@ describe('a resize', () => {
 			expect([...observersOf(a), ...observersOf(b)]).toEqual(before);
 			expect(observer.viewportWidth).toBe(1200);
 
-			// `b` is not active and its line did not move, so it is not read.
+			// `b` is not active or near, and its line did not move, so it is
+			// not read.
 			expect(b.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it('should read a near element, whose bottom edge a reflow can move across the line inside the band', () => {
+			const onActivate = vi.fn();
+			place(a, 300, 480);
+			observer.register(a, { onActivate });
+			report(a);
+			tick(observer);
+			onActivate.mockClear();
+			expect(observer.instances.get(a).state).toBe('passed');
+
+			// The narrower page wraps more lines, and `a` grows across the
+			// line. Both IntersectionObservers still see it, so neither
+			// reports.
+			place(a, 300, 550);
+			resizeTo(1200, 1000);
+
+			expect(observer.instances.get(a).state).toBe('active');
+			expect([...a.classList]).toEqual(['is-active']);
+			expect(onActivate).toHaveBeenCalledTimes(1);
 		});
 
 		it("should read an active element, whose height a reflow can change", () => {
