@@ -5,7 +5,7 @@
  * when elements cross a configurable "trigger line" in the viewport.
  *
  * Features:
- * - Single shared RAF loop (only runs when instances are active)
+ * - Single shared RAF loop (stops when the page is still)
  * - Batched DOM read/write operations
  * - Configurable trigger line per instance (px, %, vh, vw)
  * - Configurable scroll direction behavior
@@ -28,6 +28,10 @@
  *
  * @license MIT
  */
+
+// Ticks in a row with no move and no IO report before the loop stops. More
+// than one, so a scroll that skips a frame does not stop and restart it.
+const STILL_FRAMES = 2;
 
 class LineObserver {
 	/**
@@ -73,6 +77,7 @@ class LineObserver {
 		this.rafId = null;
 		this.lastScrollY = window.scrollY;
 		this.currentDirection = 'down';
+		this.stillFrames = 0;
 
 		// The scroll position trackDirection() last saw.
 		this.directionScrollY = window.scrollY;
@@ -91,9 +96,10 @@ class LineObserver {
 		this.resizeTimeout = null;
 		window.addEventListener('resize', this.handleResize, { passive: true });
 
-		// The loop stops when nothing is near the line, but the page can
-		// move several times before it starts again. Each move sets the
-		// direction, not the net move since the loop stopped.
+		// The loop stops when the page is still or nothing is near the
+		// line, and the page can move several times before it starts
+		// again. Each move sets the direction, not the net move since the
+		// loop stopped.
 		window.addEventListener('scroll', this.trackDirection, {
 			passive: true,
 		});
@@ -226,11 +232,12 @@ class LineObserver {
 			this.nearInstances.delete(instance);
 
 			// Content above an active element can change height and move
-			// it out of the band with the page at rest. An element that is
-			// not active has nothing to do when it leaves. The loop runs
-			// while any element is active, so it needs no start here.
+			// it out of the band with the page at rest and the loop
+			// stopped. An element that is not active has nothing to do
+			// when it leaves.
 			if (instance.state === 'active') {
 				this.reportedInstances.add(instance);
+				this.startLoop();
 			}
 		}
 	}
@@ -590,7 +597,8 @@ class LineObserver {
 	 * makes the browser lay out the page again.
 	 *
 	 * With the page at rest, only an element IO has reported since the last
-	 * pass can have changed state, so a pass at rest reads only those.
+	 * pass can have changed state, so a pass at rest reads only those. With
+	 * no move and no report, the loop stops after `STILL_FRAMES` ticks.
 	 *
 	 * @private
 	 */
@@ -608,9 +616,17 @@ class LineObserver {
 		const moved = scrollY !== this.lastScrollY;
 
 		if (!moved && this.reportedInstances.size === 0) {
+			// A scroll event, an IO report or an activation starts the
+			// loop again.
+			if (++this.stillFrames >= STILL_FRAMES) {
+				this.isRunning = false;
+				return;
+			}
 			this.rafId = requestAnimationFrame(this.tick);
 			return;
 		}
+
+		this.stillFrames = 0;
 
 		// After an anchor jump, Chromium runs this frame's RAF callbacks
 		// before the scroll event, so the direction can be one move behind.
@@ -671,22 +687,33 @@ class LineObserver {
 	}
 
 	/**
-	 * Start the RAF loop
+	 * Starts the RAF loop if anything is near or active.
+	 *
+	 * `lastScrollY` keeps the position of the last pass. The loop can stop
+	 * with elements active, and the first tick after a restart must see a
+	 * move made while it was stopped.
 	 *
 	 * @private
 	 */
 	startLoop() {
-		if (!this.isRunning) {
-			this.isRunning = true;
-			this.lastScrollY = window.scrollY;
-			this.rafId = requestAnimationFrame(this.tick);
+		if (
+			this.isRunning ||
+			(this.activeInstances.size === 0 && this.nearInstances.size === 0)
+		) {
+			return;
 		}
+
+		this.isRunning = true;
+		this.stillFrames = 0;
+		this.rafId = requestAnimationFrame(this.tick);
 	}
 
 	/**
-	 * Records which way the page moved since the last call.
+	 * Records which way the page moved since the last call, and starts the loop.
 	 *
-	 * This is the passive scroll listener, so it only reads and compares.
+	 * This is the passive scroll listener, so it only reads, compares and
+	 * requests a frame. `tick()` also calls it, while the loop runs, so the
+	 * start does nothing there.
 	 *
 	 * @private
 	 */
@@ -698,6 +725,8 @@ class LineObserver {
 				scrollY > this.directionScrollY ? 'down' : 'up';
 			this.directionScrollY = scrollY;
 		}
+
+		this.startLoop();
 	}
 
 	/**

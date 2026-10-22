@@ -2,7 +2,7 @@
 
 A performant scroll interaction observer that triggers handlers when elements cross a configurable "trigger line" in the viewport.
 
-- Single shared `requestAnimationFrame` loop (only runs when instances are active)
+- Single shared `requestAnimationFrame` loop that stops when the page is still
 - Batched DOM read/write operations via IntersectionObserver + RAF
 - Configurable trigger line per instance (px, %, vh, vw)
 - Bidirectional scroll support with consistent offset values
@@ -124,7 +124,7 @@ observer.getTotalCount(); // 10
 
 ### isActive()
 
-Returns `true` if the internal RAF loop is currently running. Returns `false` after `destroy()`.
+Returns `true` if the internal RAF loop is currently running. The loop stops two frames after the page comes to rest, even with elements active, and starts again on the next scroll, or when an IntersectionObserver reports an element. Returns `false` after `destroy()`.
 
 ```js
 observer.isActive(); // true
