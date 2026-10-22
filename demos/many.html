@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: many elements, three observers</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		.trigger-line.at-30 {
+			top: 30vh;
+			border-color: #26c;
+		}
+
+		.trigger-line.at-30::after {
+			content: "trigger line, 30vh";
+			color: #26c;
+		}
+
+		.trigger-line.at-70 {
+			top: 70vh;
+			border-color: #a6c;
+		}
+
+		.trigger-line.at-70::after {
+			content: "trigger line, 70vh";
+			color: #a6c;
+		}
+
+		.box {
+			margin-bottom: 12px;
+			padding: 4px 12px;
+			font-size: 12px;
+		}
+
+		.box.short {
+			padding: 0 12px;
+			font-size: 11px;
+			line-height: 16px;
+		}
+
+		.box[data-observer="0"] {
+			border-left: 8px solid #26c;
+		}
+
+		.box[data-observer="1"] {
+			border-left: 8px solid #c22;
+		}
+
+		.box[data-observer="2"] {
+			border-left: 8px solid #a6c;
+		}
+
+		.box.is-passed {
+			background: #e8e8e8;
+		}
+	</style>
+	<script>
+		// Runs before the library loads, so every IntersectionObserver it
+		// creates, and every frame it requests, goes through here.
+		window.ioCreated = 0;
+		const NativeIntersectionObserver = window.IntersectionObserver;
+		window.IntersectionObserver = function (callback, options) {
+			window.ioCreated++;
+			return new NativeIntersectionObserver(callback, options);
+		};
+
+		// Inside the library's RAF callbacks, logs each rect read and each
+		// class or style write with the frame's time. A read that follows a
+		// write in the same frame makes the browser recalculate styles and
+		// layout before it can answer.
+		window.frameLog = [];
+		let inLibraryFrame = false;
+		let frameTime = 0;
+
+		const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+		window.requestAnimationFrame = (callback) => {
+			const fromLibrary = /line-observer\.js/.test(new Error().stack || '');
+			return nativeRequestAnimationFrame((time) => {
+				if (!fromLibrary) {
+					callback(time);
+					return;
+				}
+				inLibraryFrame = true;
+				frameTime = time;
+				try {
+					callback(time);
+				} finally {
+					inLibraryFrame = false;
+				}
+			});
+		};
+
+		const logged = (prototype, name, kind) => {
+			const native = prototype[name];
+			prototype[name] = function (...args) {
+				if (inLibraryFrame) {
+					window.frameLog.push([frameTime, kind]);
+				}
+				return native.apply(this, args);
+			};
+		};
+
+		logged(Element.prototype, 'getBoundingClientRect', 'read');
+		logged(DOMTokenList.prototype, 'add', 'write');
+		logged(DOMTokenList.prototype, 'remove', 'write');
+		logged(CSSStyleDeclaration.prototype, 'setProperty', 'write');
+	</script>
+</head>
+<body>
+	<div class="trigger-line at-30"></div>
+	<div class="trigger-line"></div>
+	<div class="trigger-line at-70"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. 300 boxes, split across three observers with lines at 30vh (blue edge), 50vh (red) and 70vh (purple). Every tenth box from the fourth is <code>once</code>; every seventh is 20px tall. Scroll down and up: each box turns green while it spans its own line, and grey past it. A <code>once</code> box stays green. The counts below should read 6 IntersectionObservers and 0 reads after a write.</p>
+		<nav>
+			<button type="button" id="destroy">Destroy the 50vh observer</button>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>IntersectionObservers created: <strong id="io">0</strong>. Library frames with a read after a write: <strong id="late">0</strong>.</p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+		<div id="boxes"></div>
+		<div class="spacer"></div>
+	</main>
+
+	<script>
+		const COUNT = 300;
+		const LINES = ['30vh', '50vh', '70vh'];
+
+		for (let i = 0; i < COUNT; i++) {
+			const box = document.createElement('section');
+			const once = i % 10 === 3;
+			const short = i % 7 === 0;
+			box.className = short ? 'box short' : 'box';
+			box.id = `box-${i}`;
+			box.dataset.observer = i % 3;
+			box.dataset.once = once;
+			box.style.height = short ? '20px' : `${60 + ((i * 37) % 100)}px`;
+			box.textContent = `${i}, ${LINES[i % 3]}${once ? ', once' : ''}${short ? ', short' : ''}`;
+			document.getElementById('boxes').append(box);
+		}
+	</script>
+	<script src="../build/line-observer.js"></script>
+	<script src="js/check.js"></script>
+	<script>
+		const { waitFrames, jump, setUpChecks } = window.demoCheck;
+
+		const boxes = [...document.querySelectorAll('.box')];
+		const events = new Map(boxes.map((box) => [box.id, []]));
+		let step = 0;
+
+		const record = (type) => (...args) => {
+			const element = type === 'S' ? args[1] : args[0];
+			events.get(element.id).push({ type, step });
+		};
+
+		const observers = LINES.map((triggerLine) => new LineObserver({ triggerLine }));
+
+		for (const box of boxes) {
+			observers[box.dataset.observer].register(box, {
+				once: box.dataset.once === 'true',
+				onActivate: record('A'),
+				onScroll: record('S'),
+				onDeactivate: record('D'),
+			});
+		}
+
+		// Counts the library frames in which a read follows a write.
+		const framesWithLateReads = () => {
+			const written = new Set();
+			const late = new Set();
+			for (const [time, kind] of window.frameLog) {
+				if (kind === 'write') {
+					written.add(time);
+				} else if (written.has(time)) {
+					late.add(time);
+				}
+			}
+			return late.size;
+		};
+
+		const showCounts = () => {
+			document.getElementById('io').textContent = window.ioCreated;
+			document.getElementById('late').textContent = framesWithLateReads();
+		};
+
+		showCounts();
+		setInterval(showCounts, 250);
+
+		document.getElementById('destroy').addEventListener('click', () => observers[1].destroy());
+
+		// Scrolls `by` pixels a frame until it reaches `to`.
+		const scrollThrough = async (to, by) => {
+			for (;;) {
+				const next = by > 0 ? Math.min(window.scrollY + by, to) : Math.max(window.scrollY + by, to);
+				window.scrollTo({ top: next, behavior: 'instant' });
+				step++;
+				await waitFrames(1);
+				if (next === to || Math.abs(window.scrollY - next) > 1) {
+					break;
+				}
+			}
+			await waitFrames();
+		};
+
+		const bottom = () => document.documentElement.scrollHeight - window.innerHeight;
+
+		const patternOf = (box) => events.get(box.id).map(({ type }) => type).join('');
+
+		// Boxes whose callbacks don't match `pattern`, or `pattern` for once boxes.
+		const badPatterns = (pattern, oncePattern, list = boxes) =>
+			list
+				.filter((box) => !(box.dataset.once === 'true' ? oncePattern : pattern).test(patternOf(box)))
+				.map((box) => `${box.id}: ${patternOf(box)}`);
+
+		// The step of the `nth` event of `type` for each box, in document order,
+		// for each observer. Returns the observers in which those steps go the
+		// wrong way.
+		const outOfOrder = (type, nth, direction, list = boxes) =>
+			[0, 1, 2].filter((index) => {
+				const steps = list
+					.filter((box) => box.dataset.observer === String(index))
+					.map((box) => events.get(box.id).filter((event) => event.type === type)[nth]?.step)
+					.filter((value) => value !== undefined);
+				return steps.some((value, i) => i > 0 && (value - steps[i - 1]) * direction < 0);
+			});
+
+		const notOnce = (box) => box.dataset.once !== 'true';
+
+		setUpChecks([
+			{
+				name: '300 elements over three observers use 6 IntersectionObservers',
+				run: async () => {
+					await waitFrames();
+					return {
+						expected: { registered: COUNT, intersectionObservers: 6 },
+						actual: {
+							registered: observers.reduce((sum, observer) => sum + observer.getTotalCount(), 0),
+							intersectionObservers: window.ioCreated,
+						},
+					};
+				},
+			},
+			{
+				name: 'Down through all 300 at 150px a frame: each activates, then deactivates, in order, with no read after a write in a frame',
+				run: async () => {
+					await jump(0);
+					window.frameLog.length = 0;
+					await scrollThrough(bottom(), 150);
+					return {
+						expected: {
+							badPatterns: [],
+							activatedOutOfOrder: [],
+							deactivatedOutOfOrder: [],
+							framesWithLateReads: 0,
+							onceRevealed: 30,
+						},
+						actual: {
+							badPatterns: badPatterns(/^AS+D$/, /^AS$/),
+							activatedOutOfOrder: outOfOrder('A', 0, 1),
+							deactivatedOutOfOrder: outOfOrder('D', 0, 1, boxes.filter(notOnce)),
+							framesWithLateReads: framesWithLateReads(),
+							onceRevealed: boxes.filter((box) => box.dataset.once === 'true' && box.classList.contains('is-active')).length,
+						},
+					};
+				},
+			},
+			{
+				name: 'Back up to the top: each again in reverse order, and once boxes stay revealed',
+				run: async () => {
+					window.frameLog.length = 0;
+					await scrollThrough(0, -150);
+					return {
+						expected: {
+							badPatterns: [],
+							activatedOutOfOrder: [],
+							deactivatedOutOfOrder: [],
+							framesWithLateReads: 0,
+							stillClassed: 30,
+							observed: COUNT - 30,
+						},
+						actual: {
+							badPatterns: badPatterns(/^AS+DAS+D$/, /^AS$/),
+							activatedOutOfOrder: outOfOrder('A', 1, -1, boxes.filter(notOnce)),
+							deactivatedOutOfOrder: outOfOrder('D', 1, -1, boxes.filter(notOnce)),
+							framesWithLateReads: framesWithLateReads(),
+							stillClassed: boxes.filter((box) => box.classList.contains('is-active')).length,
+							observed: observers.reduce((sum, observer) => sum + observer.getTotalCount(), 0),
+						},
+					};
+				},
+			},
+			{
+				name: 'Destroy the 50vh observer, then down again: the other two still work',
+				run: async () => {
+					observers[1].destroy();
+					const left = boxes.filter((box) => box.dataset.observer !== '1');
+					const gone = boxes.filter((box) => box.dataset.observer === '1');
+					const goneBefore = gone.map(patternOf).join();
+					await scrollThrough(bottom(), 150);
+					return {
+						expected: {
+							badPatterns: [],
+							activatedOutOfOrder: [],
+							goneUnchanged: true,
+							goneClassed: gone.filter((box) => box.dataset.once === 'true').length,
+							intersectionObservers: 6,
+						},
+						actual: {
+							badPatterns: badPatterns(/^AS+DAS+DAS+D$/, /^AS$/, left),
+							activatedOutOfOrder: outOfOrder('A', 2, 1, left.filter(notOnce)),
+							goneUnchanged: gone.map(patternOf).join() === goneBefore,
+							goneClassed: gone.filter(
+								(box) => box.classList.contains('is-active') || box.classList.contains('is-passed')
+							).length,
+							intersectionObservers: window.ioCreated,
+						},
+					};
+				},
+			},
+		]);
+	</script>
+</body>
+</html>

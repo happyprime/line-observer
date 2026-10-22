@@ -33,16 +33,20 @@
 	</style>
 	<script>
 		// Counts the library's RAF callbacks. This runs before the library
-		// loads, so every frame it requests goes through here.
+		// loads, so every frame it requests goes through here. The loop is
+		// shared by every observer on the page, so a frame is the library's
+		// when the library asked for it.
 		window.loopFrames = 0;
 		const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
-		window.requestAnimationFrame = (callback) =>
-			nativeRequestAnimationFrame((time) => {
-				if (window.observer && callback === window.observer.tick) {
+		window.requestAnimationFrame = (callback) => {
+			const fromLibrary = /line-observer\.js/.test(new Error().stack || '');
+			return nativeRequestAnimationFrame((time) => {
+				if (fromLibrary) {
 					window.loopFrames++;
 				}
 				callback(time);
 			});
+		};
 	</script>
 </head>
 <body>
