@@ -5,8 +5,8 @@
  * when elements cross a configurable "trigger line" in the viewport.
  *
  * Features:
- * - Single shared RAF loop (stops when the page is still)
- * - Batched DOM read/write operations
+ * - One RAF loop for every instance on the page (stops when the page is still)
+ * - Batched DOM read/write operations, across instances
  * - Configurable trigger line per instance (px, %, vh, vw)
  * - Configurable scroll direction behavior
  * - Bidirectional scroll support with consistent offset values
@@ -36,6 +36,156 @@ const STILL_FRAMES = 2;
 // element higher than this reads as below the line to that observer.
 // Chromium clamps a larger margin to 33,554,432px.
 const EDGE_REACH = 10000000;
+
+/**
+ * Runs one RAF loop, one scroll listener and one resize listener for every LineObserver.
+ *
+ * Each frame runs every observer's reads, then every observer's writes, so
+ * no observer reads the page after another has written to it. Such a read
+ * makes the browser recalculate styles and layout in the middle of the frame.
+ *
+ * @private
+ */
+class Scheduler {
+	/**
+	 * Creates the scheduler. It touches `window` only when an observer joins.
+	 */
+	constructor() {
+		this.observers = new Set();
+		this.rafId = null;
+		this.resizeTimeout = null;
+
+		this.frame = this.frame.bind(this);
+		this.handleScroll = this.handleScroll.bind(this);
+		this.handleResize = this.handleResize.bind(this);
+	}
+
+	/**
+	 * Adds an observer, and the listeners if it is the first.
+	 *
+	 * @param {LineObserver} observer - The observer.
+	 */
+	add(observer) {
+		if (this.observers.size === 0) {
+			window.addEventListener('scroll', this.handleScroll, {
+				passive: true,
+			});
+			window.addEventListener('resize', this.handleResize, {
+				passive: true,
+			});
+		}
+
+		this.observers.add(observer);
+	}
+
+	/**
+	 * Removes an observer, and the listeners if it is the last.
+	 *
+	 * @param {LineObserver} observer - The observer.
+	 */
+	remove(observer) {
+		this.observers.delete(observer);
+
+		if (this.rafId !== null && !this.anyRunning()) {
+			cancelAnimationFrame(this.rafId);
+			this.rafId = null;
+		}
+
+		if (this.observers.size === 0) {
+			clearTimeout(this.resizeTimeout);
+			this.resizeTimeout = null;
+			window.removeEventListener('scroll', this.handleScroll);
+			window.removeEventListener('resize', this.handleResize);
+		}
+	}
+
+	/**
+	 * Returns whether any observer's loop is running.
+	 *
+	 * @return {boolean} True if the next frame has work.
+	 */
+	anyRunning() {
+		for (const observer of this.observers) {
+			if (observer.isRunning) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Requests the next frame, unless one is already requested.
+	 */
+	request() {
+		if (this.rafId === null) {
+			this.rafId = requestAnimationFrame(this.frame);
+		}
+	}
+
+	/**
+	 * Runs every running observer's reads, then their writes, and requests the next frame while any still runs.
+	 */
+	frame() {
+		this.rafId = null;
+
+		const scrollY = window.scrollY;
+		const passes = [];
+
+		for (const observer of this.observers) {
+			if (observer.isRunning) {
+				const changes = observer._readFrame(scrollY);
+				if (changes) {
+					passes.push([observer, changes]);
+				}
+			}
+		}
+
+		for (const [observer, changes] of passes) {
+			observer._apply(changes);
+		}
+
+		// A callback can start, stop or destroy any observer.
+		if (this.anyRunning()) {
+			this.request();
+		}
+	}
+
+	/**
+	 * Gives every observer the new scroll position.
+	 *
+	 * The loop stops when the page is still or nothing is near the line,
+	 * and the page can move several times before it starts again. Each move
+	 * sets the direction, not the net move since the loop stopped.
+	 */
+	handleScroll() {
+		const scrollY = window.scrollY;
+
+		for (const observer of this.observers) {
+			observer.trackDirection(scrollY);
+		}
+	}
+
+	/**
+	 * Runs every observer's resize reads, then their writes, 150ms after the last resize event.
+	 */
+	handleResize() {
+		clearTimeout(this.resizeTimeout);
+		this.resizeTimeout = setTimeout(() => {
+			this.resizeTimeout = null;
+
+			const passes = [...this.observers].map((observer) => [
+				observer,
+				observer._readResize(),
+			]);
+
+			for (const [observer, changes] of passes) {
+				observer._apply(changes);
+			}
+		}, 150);
+	}
+}
+
+const scheduler = new Scheduler();
 
 class LineObserver {
 	/**
@@ -82,9 +232,13 @@ class LineObserver {
 		this.activeInstances = new Set();
 		this.nearInstances = new Set();
 
-		// RAF state
+		// IntersectionObservers by rootMargin. Elements with the same
+		// rootMargin share one.
+		this.nearObservers = new Map();
+		this.edgeObservers = new Map();
+
+		// Loop state. The loop itself belongs to the scheduler.
 		this.isRunning = false;
-		this.rafId = null;
 		this.lastScrollY = window.scrollY;
 		this.currentDirection = 'down';
 		this.stillFrames = 0;
@@ -97,26 +251,11 @@ class LineObserver {
 		// these elements still need a pass.
 		this.reportedInstances = new Set();
 
-		// Bind methods
-		this.tick = this.tick.bind(this);
-		this.handleResize = this.handleResize.bind(this);
-		this.trackDirection = this.trackDirection.bind(this);
-
-		// Resize handling (debounced)
-		this.resizeTimeout = null;
-		window.addEventListener('resize', this.handleResize, { passive: true });
-
-		// The loop stops when the page is still or nothing is near the
-		// line, and the page can move several times before it starts
-		// again. Each move sets the direction, not the net move since the
-		// loop stopped.
-		window.addEventListener('scroll', this.trackDirection, {
-			passive: true,
-		});
-
 		// Cache viewport dimensions
 		this.viewportHeight = window.innerHeight;
 		this.viewportWidth = window.innerWidth;
+
+		scheduler.add(this);
 	}
 
 	/**
@@ -172,13 +311,13 @@ class LineObserver {
 	}
 
 	/**
-	 * Create IntersectionObserver for an instance
+	 * Returns the rootMargin of the band around the instance's trigger line.
 	 *
 	 * @param {Object} instance - The observer instance containing element and trigger configuration.
-	 * @return {IntersectionObserver}          The created IntersectionObserver.
+	 * @return {string} The rootMargin.
 	 * @private
 	 */
-	createObserver(instance) {
+	_nearRootMargin(instance) {
 		// Create a wide band around the trigger line as a nearness detector.
 		// IO only adds/removes elements from `nearInstances` — the RAF loop
 		// handles precise state transitions using fresh getBoundingClientRect.
@@ -186,13 +325,15 @@ class LineObserver {
 		// The `nearMargin` option (default: 100px) controls the band width.
 		// Larger values detect elements earlier but keep the RAF loop running
 		// longer; smaller values are more efficient but may miss fast scrolls.
-		// The active-instances pass in tick() acts as a safety net for elements
-		// that skip the band entirely during very fast scrolling, and the edge
-		// observer reports elements that cross the line without entering it.
+		// The active-instances pass in _readFrame() acts as a safety net for
+		// elements that skip the band entirely during very fast scrolling, and
+		// the edge observer reports elements that cross the line without
+		// entering it.
 		//
 		// Note: if nearMargin exceeds the trigger line's distance from a viewport
 		// edge, the rootMargin becomes positive on that side, extending the band
-		// beyond the viewport. This is harmless — tick() still does precise checks.
+		// beyond the viewport. This is harmless — _readFrame() still does
+		// precise checks.
 		//
 		// Example: 50vh trigger on 1000px viewport, nearMargin = 100
 		//   topMargin  = -500 + 100 = -400  (shrink viewport 400px from top)
@@ -204,16 +345,98 @@ class LineObserver {
 			this.viewportHeight - instance.triggerLinePx - margin
 		);
 
-		const observer = new IntersectionObserver(
-			(entries) => this.handleIntersection(entries, instance),
-			{
-				rootMargin: `${topMargin}px 0px ${bottomMargin}px 0px`,
-				threshold: [0],
-			}
-		);
+		return `${topMargin}px 0px ${bottomMargin}px 0px`;
+	}
 
-		observer.observe(instance.element);
-		return observer;
+	/**
+	 * Observes the element with the near and edge IntersectionObservers for its rootMargins.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @private
+	 */
+	_observe(instance) {
+		instance.near = this._join(
+			this.nearObservers,
+			this._nearRootMargin(instance),
+			this.handleIntersection,
+			instance
+		);
+		instance.edge = this._join(
+			this.edgeObservers,
+			this._edgeRootMargin(instance),
+			this.handleEdgeIntersection,
+			instance
+		);
+	}
+
+	/**
+	 * Stops observing the element, and disconnects an IntersectionObserver left with no elements.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @private
+	 */
+	_unobserve(instance) {
+		for (const [observers, shared] of [
+			[this.nearObservers, instance.near],
+			[this.edgeObservers, instance.edge],
+		]) {
+			shared.instances.delete(instance.element);
+
+			if (shared.instances.size === 0) {
+				shared.observer.disconnect();
+				observers.delete(shared.rootMargin);
+			} else {
+				shared.observer.unobserve(instance.element);
+			}
+		}
+	}
+
+	/**
+	 * Adds the element to this LineObserver's IntersectionObserver for `rootMargin`, and creates it if there is none.
+	 *
+	 * The same element can be registered with two LineObservers. `observe()`
+	 * on an element an IntersectionObserver already observes does nothing and
+	 * sends no first report, so LineObservers do not share them.
+	 *
+	 * @param {Map}      observers  - The near or edge observers, by rootMargin.
+	 * @param {string}   rootMargin - The rootMargin.
+	 * @param {Function} handle     - The handler for one instance's entries.
+	 * @param {Object}   instance   - The observer instance.
+	 * @return {Object} `{ observer, rootMargin, instances }`, where
+	 *                  `instances` maps each element to its instance.
+	 * @private
+	 */
+	_join(observers, rootMargin, handle, instance) {
+		let shared = observers.get(rootMargin);
+
+		if (!shared) {
+			const instances = new Map();
+
+			const observer = new IntersectionObserver(
+				(entries) => {
+					// The last entry for an element is its current state.
+					const latest = new Map(
+						entries.map((entry) => [entry.target, entry])
+					);
+
+					for (const [element, entry] of latest) {
+						const target = instances.get(element);
+						if (target) {
+							handle.call(this, [entry], target);
+						}
+					}
+				},
+				{ rootMargin, threshold: [0] }
+			);
+
+			shared = { observer, rootMargin, instances };
+			observers.set(rootMargin, shared);
+		}
+
+		shared.instances.set(instance.element, instance);
+		shared.observer.observe(instance.element);
+
+		return shared;
 	}
 
 	/**
@@ -222,9 +445,9 @@ class LineObserver {
 	 * IO fires when an element enters or leaves the wide band around the
 	 * trigger line. This method only manages the `nearInstances` and
 	 * `reportedInstances` sets and starts the RAF loop. Actual state
-	 * transitions happen in `tick()`.
+	 * transitions happen in a pass of the loop.
 	 *
-	 * @param {IntersectionObserverEntry[]} entries  - Array of intersection observer entries.
+	 * @param {IntersectionObserverEntry[]} entries  - Entries for the instance's element.
 	 * @param {Object}                      instance - The observer instance associated with the intersection.
 	 * @private
 	 */
@@ -254,7 +477,7 @@ class LineObserver {
 	}
 
 	/**
-	 * Creates an IntersectionObserver that reports each time the element's top edge crosses the trigger line.
+	 * Returns the rootMargin of an IntersectionObserver that reports each time the element's top edge crosses the trigger line.
 	 *
 	 * The root reaches from `EDGE_REACH` above the viewport down to the
 	 * trigger line, so the element intersects it while its top edge is above
@@ -263,31 +486,22 @@ class LineObserver {
 	 * the page at rest. This observer reports both.
 	 *
 	 * @param {Object} instance - The observer instance.
-	 * @return {IntersectionObserver} The created IntersectionObserver.
+	 * @return {string} The rootMargin.
 	 * @private
 	 */
-	createEdgeObserver(instance) {
+	_edgeRootMargin(instance) {
 		const bottomMargin = -(this.viewportHeight - instance.triggerLinePx);
 
-		const observer = new IntersectionObserver(
-			(entries) => this.handleEdgeIntersection(entries, instance),
-			{
-				rootMargin: `${EDGE_REACH}px 0px ${bottomMargin}px 0px`,
-				threshold: [0],
-			}
-		);
-
-		observer.observe(instance.element);
-		return observer;
+		return `${EDGE_REACH}px 0px ${bottomMargin}px 0px`;
 	}
 
 	/**
 	 * Asks for a pass when the element's top edge is on the other side of the line from where its state says.
 	 *
-	 * Each observer reports every element when it starts, and the state
+	 * IO reports every element when it starts observing it, and the state
 	 * already agrees for most of them, so those reports ask for nothing.
 	 *
-	 * @param {IntersectionObserverEntry[]} entries  - Array of intersection observer entries.
+	 * @param {IntersectionObserverEntry[]} entries  - Entries for the instance's element.
 	 * @param {Object}                      instance - The observer instance associated with the intersection.
 	 * @private
 	 */
@@ -336,10 +550,11 @@ class LineObserver {
 	/**
 	 * Calls a user callback and reports an error it throws.
 	 *
-	 * An uncaught error would leave `tick()` before it requests the next
-	 * frame. `isRunning` stays true, so `startLoop()` never requests one
-	 * again. The error would also skip the rest of the pass, the rest of a
-	 * resize pass, and the rest of a caller's loop over `register()`.
+	 * An uncaught error would leave the scheduler's frame before it requests
+	 * the next one. Every running observer keeps `isRunning` true, so
+	 * `startLoop()` never requests one for them again. The error would also
+	 * skip the rest of the frame, the rest of a resize pass, and the rest of
+	 * a caller's loop over `register()`.
 	 * `reportError()` fires the window `error` event, as an uncaught error
 	 * does, so error trackers still see it.
 	 *
@@ -468,13 +683,11 @@ class LineObserver {
 			progress: 0,
 			elementHeight: 0,
 			triggerLinePx: this.parseTriggerLine(mergedOptions.triggerLine),
-			observer: null,
-			edgeObserver: null,
+			near: null,
+			edge: null,
 		};
 
-		// Create and attach observers
-		instance.observer = this.createObserver(instance);
-		instance.edgeObserver = this.createEdgeObserver(instance);
+		this._observe(instance);
 		this.instances.set(element, instance);
 
 		// Check initial state (element might already be in view)
@@ -542,8 +755,7 @@ class LineObserver {
 	 * @private
 	 */
 	_forget(instance) {
-		instance.observer.disconnect();
-		instance.edgeObserver.disconnect();
+		this._unobserve(instance);
 
 		this.activeInstances.delete(instance);
 		this.nearInstances.delete(instance);
@@ -745,25 +957,25 @@ class LineObserver {
 	}
 
 	/**
-	 * Main RAF loop
+	 * Reads every element this frame's pass needs, and returns their changes, or null if there is no pass.
 	 *
-	 * Each pass reads every rect and height it needs, then writes classes,
-	 * styles and callbacks. A read that follows a write in the same frame
-	 * makes the browser lay out the page again.
+	 * It writes nothing to the DOM, so every observer's reads can run before
+	 * any observer's writes. `_apply()` writes the changes.
 	 *
 	 * With the page at rest, only an element IO has reported since the last
 	 * pass can have changed state, so a pass at rest reads only those. With
-	 * no move and no report, the loop stops after `STILL_FRAMES` ticks.
+	 * no move and no report, the loop stops after `STILL_FRAMES` frames.
 	 *
+	 * @param {number} scrollY - `window.scrollY`, read before any write in this frame.
+	 * @return {Object[]|null} Results of `_read()`, or null.
 	 * @private
 	 */
-	tick() {
-		if (this.destroyed || !this._hasWork()) {
+	_readFrame(scrollY) {
+		if (!this._hasWork()) {
 			this.isRunning = false;
-			return;
+			return null;
 		}
 
-		const scrollY = window.scrollY;
 		const moved = scrollY !== this.lastScrollY;
 
 		if (!moved && this.reportedInstances.size === 0) {
@@ -771,19 +983,17 @@ class LineObserver {
 			// loop again.
 			if (++this.stillFrames >= STILL_FRAMES) {
 				this.isRunning = false;
-				return;
 			}
-			this.rafId = requestAnimationFrame(this.tick);
-			return;
+			return null;
 		}
 
 		this.stillFrames = 0;
+		this.lastScrollY = scrollY;
 
 		// After an anchor jump, Chromium runs this frame's RAF callbacks
 		// before the scroll event, so the direction can be one move behind.
-		this.trackDirection();
+		this.trackDirection(scrollY);
 
-		// === READ PHASE ===
 		const changes = [];
 		const read = (instance) => {
 			const change = this._read(instance, true);
@@ -820,23 +1030,14 @@ class LineObserver {
 
 		this.reportedInstances.clear();
 
-		// === WRITE PHASE ===
-		this._apply(changes);
-
-		// Update tracking
-		this.lastScrollY = scrollY;
-
-		// A callback can call destroy().
-		if (!this.destroyed) {
-			this.rafId = requestAnimationFrame(this.tick);
-		}
+		return changes;
 	}
 
 	/**
-	 * Starts the RAF loop if anything is near, active or reported.
+	 * Starts this observer's part of the shared loop if anything is near, active or reported.
 	 *
 	 * `lastScrollY` keeps the position of the last pass. The loop can stop
-	 * with elements active, and the first tick after a restart must see a
+	 * with elements active, and the first frame after a restart must see a
 	 * move made while it was stopped.
 	 *
 	 * @private
@@ -848,7 +1049,7 @@ class LineObserver {
 
 		this.isRunning = true;
 		this.stillFrames = 0;
-		this.rafId = requestAnimationFrame(this.tick);
+		scheduler.request();
 	}
 
 	/**
@@ -868,15 +1069,14 @@ class LineObserver {
 	/**
 	 * Records which way the page moved since the last call, and starts the loop.
 	 *
-	 * This is the passive scroll listener, so it only reads, compares and
-	 * requests a frame. `tick()` also calls it, while the loop runs, so the
+	 * It runs on every scroll event, so it only compares and requests a
+	 * frame. It also runs in `_readFrame()`, while the loop runs, so the
 	 * start does nothing there.
 	 *
+	 * @param {number} scrollY - `window.scrollY`.
 	 * @private
 	 */
-	trackDirection() {
-		const scrollY = window.scrollY;
-
+	trackDirection(scrollY) {
 		if (scrollY !== this.directionScrollY) {
 			this.currentDirection =
 				scrollY > this.directionScrollY ? 'down' : 'up';
@@ -887,45 +1087,40 @@ class LineObserver {
 	}
 
 	/**
-	 * Handle window resize
+	 * Reads the new viewport, observes each element with the line it moves to, and returns the changes a resize pass must apply.
 	 *
+	 * Like `_readFrame()`, it writes nothing to the DOM. `_apply()` writes the
+	 * changes.
+	 *
+	 * @return {Object[]} Results of `_read()`.
 	 * @private
 	 */
-	handleResize() {
-		clearTimeout(this.resizeTimeout);
-		this.resizeTimeout = setTimeout(() => {
-			if (this.destroyed) {
-				return;
+	_readResize() {
+		this.viewportHeight = window.innerHeight;
+		this.viewportWidth = window.innerWidth;
+
+		const changes = [];
+
+		// Recalculate trigger line, observe again, and re-check states. The
+		// line can move, so an element that stays active gets fresh values
+		// too.
+		for (const instance of this.instances.values()) {
+			if (!instance.element.isConnected) {
+				continue;
 			}
+			this._unobserve(instance);
+			instance.triggerLinePx = this.parseTriggerLine(
+				instance.options.triggerLine
+			);
+			this._observe(instance);
 
-			this.viewportHeight = window.innerHeight;
-			this.viewportWidth = window.innerWidth;
-
-			const changes = [];
-
-			// Recalculate trigger line, recreate observers, and re-check
-			// states. The line can move, so an element that stays active
-			// gets fresh values too.
-			for (const instance of this.instances.values()) {
-				if (!instance.element.isConnected) {
-					continue;
-				}
-				instance.observer.disconnect();
-				instance.edgeObserver.disconnect();
-				instance.triggerLinePx = this.parseTriggerLine(
-					instance.options.triggerLine
-				);
-				instance.observer = this.createObserver(instance);
-				instance.edgeObserver = this.createEdgeObserver(instance);
-
-				const change = this._read(instance, false);
-				if (change) {
-					changes.push(change);
-				}
+			const change = this._read(instance, false);
+			if (change) {
+				changes.push(change);
 			}
+		}
 
-			this._apply(changes);
-		}, 150);
+		return changes;
 	}
 
 	/**
@@ -947,7 +1142,7 @@ class LineObserver {
 	}
 
 	/**
-	 * Check if RAF loop is running
+	 * Check if this observer's part of the RAF loop is running
 	 *
 	 * @return {boolean} True if loop is active
 	 */
@@ -966,26 +1161,23 @@ class LineObserver {
 
 	/**
 	 * Clean up everything
+	 *
+	 * Other observers keep the shared loop and listeners. The last one to be
+	 * destroyed removes them.
 	 */
 	destroy() {
 		this.destroyed = true;
-
-		// Stop RAF
-		if (this.rafId) {
-			cancelAnimationFrame(this.rafId);
-		}
 		this.isRunning = false;
-		this.rafId = null;
+		scheduler.remove(this);
 
-		// Clear any pending resize timeout
-		if (this.resizeTimeout) {
-			clearTimeout(this.resizeTimeout);
+		for (const observers of [this.nearObservers, this.edgeObservers]) {
+			for (const { observer } of observers.values()) {
+				observer.disconnect();
+			}
+			observers.clear();
 		}
 
-		// Disconnect all observers
 		for (const instance of this.instances.values()) {
-			instance.observer.disconnect();
-			instance.edgeObserver.disconnect();
 			instance.element.classList.remove(
 				instance.options.activeClass,
 				instance.options.passedClass
@@ -1000,9 +1192,6 @@ class LineObserver {
 		this.activeInstances.clear();
 		this.nearInstances.clear();
 		this.reportedInstances.clear();
-
-		window.removeEventListener('resize', this.handleResize);
-		window.removeEventListener('scroll', this.trackDirection);
 	}
 }
 

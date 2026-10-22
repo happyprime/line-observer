@@ -2,7 +2,7 @@
 
 A performant scroll interaction observer that triggers handlers when elements cross a configurable "trigger line" in the viewport.
 
-- Single shared `requestAnimationFrame` loop that stops when the page is still
+- One `requestAnimationFrame` loop for every observer on the page, which stops when the page is still
 - Batched DOM read/write operations via IntersectionObserver + RAF
 - Configurable trigger line per instance (px, %, vh, vw)
 - Bidirectional scroll support with consistent offset values
@@ -75,7 +75,7 @@ const observer = new LineObserver({
 | `passedClass` | `string` | `'is-passed'` | CSS class present while the element is past the line: its state is `'passed'`. It gives CSS a stable end state. |
 | `once` | `boolean` | `false` | When true, the element activates the first time it reaches the line, or is found past it, and then LineObserver stops observing it. It keeps `activeClass`, its values are written once, and `onDeactivate` never runs. See [Reveal once](#reveal-once). |
 | `activateFrom` | `string` | `'both'` | Which side the element crosses the trigger line from to activate: `'below'` (scrolling down), `'above'` (scrolling up), or `'both'`. |
-| `nearMargin` | `number` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling, and a second IntersectionObserver per element reports elements that cross the line without entering the band. |
+| `nearMargin` | `number` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling, and a second IntersectionObserver reports elements that cross the line without entering the band. Elements with the same trigger line and `nearMargin` share both IntersectionObservers. |
 | `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` and `--scroll-progress` on each element when its values change. Set to false if you only use callbacks. |
 | `onActivate` | `function \| null` | `null` | Called when an element crosses the trigger line and becomes active, or is found past it. Receives `(element, instance)`. |
 | `onDeactivate` | `function \| null` | `null` | Called when an element leaves the active zone. Receives `(element, instance)`. |
@@ -106,7 +106,7 @@ observer.unregister(el1);
 
 ### destroy()
 
-Tear down everything: stops the RAF loop, disconnects all IntersectionObservers, removes classes and custom properties from all observed elements, and removes the resize and scroll listeners. Revealed `once` elements keep theirs.
+Tear down the observer: takes it out of the RAF loop, disconnects its IntersectionObservers, and removes classes and custom properties from its elements. Revealed `once` elements keep theirs. Other observers keep working; the last one destroyed removes the shared resize and scroll listeners.
 
 ```js
 observer.destroy();
@@ -130,7 +130,7 @@ observer.getTotalCount(); // 10
 
 ### isActive()
 
-Returns `true` if the internal RAF loop is currently running. The loop stops two frames after the page comes to rest, even with elements active, and starts again on the next scroll, or when an IntersectionObserver reports an element. Returns `false` after `destroy()`.
+Returns `true` while this observer takes part in the shared RAF loop. The loop stops two frames after the page comes to rest, even with elements active, and starts again on the next scroll, or when an IntersectionObserver reports an element. Returns `false` after `destroy()`.
 
 ```js
 observer.isActive(); // true
