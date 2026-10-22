@@ -32,7 +32,7 @@
 	<div class="trigger-line"></div>
 
 	<aside class="panel">
-		<p><a href="index.html">All demos</a>. Scroll down. T's <code>onScroll</code> throws on its third call; boxes 1 to 4 should still activate, and T should lose <code>is-active</code> once it passes the line. Further down, U's <code>onActivate</code> unregisters V. Scroll fast enough that both cross the line in the same frame: V should get no class and no <code>--scroll-offset</code>.</p>
+		<p><a href="index.html">All demos</a>. Scroll down. T's <code>onScroll</code> throws on its third call; boxes 1 to 4 should still activate, and T should lose <code>is-active</code> once it passes the line. Further down, U's <code>onActivate</code> unregisters V. Scroll fast enough that both cross the line in the same frame: V should get no class and no <code>--scroll-offset</code>. Last, W's callbacks are written as functions, not arrow functions: each should get W's options as <code>this</code>.</p>
 		<nav>
 			<button type="button" id="restart">Start a new observer</button>
 			<button type="button" id="run-check">Run check</button>
@@ -75,6 +75,11 @@
 			</section>
 		</div>
 		<div class="spacer"></div>
+		<section class="box" id="w" style="height: 400px">
+			<strong>W</strong>: callbacks read <code>this</code>
+			<div class="readout">inactive</div>
+		</section>
+		<div class="spacer"></div>
 	</main>
 
 	<script src="js/check.js"></script>
@@ -86,11 +91,15 @@
 		const last = document.getElementById('last');
 		const u = document.getElementById('u');
 		const v = document.getElementById('v');
+		const w = document.getElementById('w');
 
 		let observer;
 		let errors = 0;
 		let activated = new Set();
 		let vCalls = 0;
+
+		// For each of W's callbacks, whether `this` was W's options.
+		let wReceivers = {};
 
 		// Counts each error the library reports, and keeps it out of the
 		// console. An error thrown out of a RAF callback lands here too.
@@ -116,6 +125,7 @@
 			errors = 0;
 			activated = new Set();
 			vCalls = 0;
+			wReceivers = {};
 			document.getElementById('errors').textContent = errors;
 
 			observer = new LineObserver({ triggerLine: '50vh' });
@@ -158,7 +168,22 @@
 				},
 			});
 
-			[...column, u, v].forEach((box) => show(box));
+			// Each callback records whether `this` is the options, and shows
+			// the class it read from them.
+			const receiver = (name) =>
+				function (...args) {
+					const instance = args[args.length - 1];
+					wReceivers[name] = this === instance.options;
+					show(w, `, this.activeClass: ${this?.activeClass}`);
+				};
+
+			observer.register(w, {
+				onActivate: receiver('onActivate'),
+				onDeactivate: receiver('onDeactivate'),
+				onScroll: receiver('onScroll'),
+			});
+
+			[...column, u, v, w].forEach((box) => show(box));
 		};
 
 		start();
@@ -230,6 +255,24 @@
 							vOffsetAfterDestroy: null,
 						},
 						actual,
+					};
+				},
+			},
+			{
+				name: "W's callbacks, written as functions, get W's options as this",
+				run: async () => {
+					await jump(0);
+					start();
+					await jump(lineInto(w, 200));
+					await jump(lineInto(w, 460));
+					return {
+						expected: { onActivate: true, onScroll: true, onDeactivate: true, errors: 0 },
+						actual: {
+							onActivate: wReceivers.onActivate,
+							onScroll: wReceivers.onScroll,
+							onDeactivate: wReceivers.onDeactivate,
+							errors,
+						},
 					};
 				},
 			},
