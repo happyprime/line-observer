@@ -383,7 +383,7 @@ What changes for code written against 0.0.1:
 
 - **`instance.activationScrollY` is gone.** Read `instance.offset`, or `instance.progress` for `offset / elementHeight`.
 - **The offset comes from the element's position:** the distance from its top edge to the line, from 0 to its height. 0.0.1 counted pixels scrolled since the element activated, so it ignored how far a jump took the element past the line, and moved when scroll anchoring moved the page.
-- **The end value is held.** An element that leaves the active zone keeps an offset equal to its height and progress 1 past the line, or 0 and 0 below it. `onScroll` gets that value once, before `onDeactivate`. 0.0.1 set `--scroll-offset` to 0 either way, so a child styled from it snapped back to its start state past the line.
+- **The end value is held.** An element that leaves the active zone, or crosses the line without activating because of `activateFrom`, keeps an offset equal to its height and progress 1 past the line, or 0 and 0 below it. `onScroll` gets that value once, before any `onDeactivate`. 0.0.1 set `--scroll-offset` to 0 either way, so a child styled from it snapped back to its start state past the line.
 - **`onScroll` runs at `register()`** for an element already across the line, and on the frame an element activates. After that it runs in each frame in which the offset or progress changes, not in each frame the page scrolls.
 - **Elements past the line get `onActivate`.** At `register()`, as on a page reloaded partway down, and when a jump, a fast scroll or a layout change takes an element across the line between two frames, it gets `onActivate`, `onScroll` and `onDeactivate`, in that order. `register()` ignores `activateFrom`, so this happens with `'below'` too. 0.0.1 gave these elements nothing. Code that handles elements already past the line itself now runs a second time: remove it, or make sure it can run twice.
 - **`is-passed` is new.** It is on while the element is past the line. Set `passedClass` if your CSS uses `is-passed` for something else.
@@ -418,13 +418,13 @@ const observer = new LineObserver({
 | `triggerLine` | `string \| number` | `'50vh'` | Where the trigger line sits in the viewport. Accepts px, %, vh, vw units or a raw number (treated as px). A string with no unit, such as `'200'`, is px too. |
 | `activeClass` | `string` | `'is-active'` | CSS class added to the element while it is in the active zone. |
 | `passedClass` | `string` | `'is-passed'` | CSS class present while the element is past the line: its state is `'passed'`. It gives CSS a stable end state. |
-| `once` | `boolean` | `false` | When true, the element activates the first time it reaches the line, or is found past it, and then LineObserver stops observing it. It keeps `activeClass`, its values are written once, and `onDeactivate` never runs. See [Reveal once](#reveal-once). |
+| `once` | `boolean` | `false` | When true, the element activates the first time it reaches the line, or is found past it, and then LineObserver stops observing it. It keeps `activeClass` and the values it had when it activated, and `onDeactivate` never runs. See [Reveal once](#reveal-once). |
 | `activateFrom` | `string` | `'both'` | Which side the element crosses the trigger line from to activate: `'below'` (scrolling down), `'above'` (scrolling up), or `'both'`. |
 | `nearMargin` | `number \| string` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling, and a second IntersectionObserver reports elements that cross the line without entering the band. Elements with the same trigger line and `nearMargin` share both IntersectionObservers. |
 | `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` and `--scroll-progress` on each element when its values change. Both inherit, so the browser restyles every element inside, even if no CSS reads them. Set to `false` if you only use callbacks. |
 | `onActivate` | `function \| null` | `null` | Called when an element crosses the trigger line and becomes active, or is found past it. Receives `(element, instance)`. |
 | `onDeactivate` | `function \| null` | `null` | Called when an element leaves the active zone. Receives `(element, instance)`. |
-| `onScroll` | `function \| null` | `null` | Called when the element activates, in each frame in which an active element's offset or progress changes, and once more with the value it holds when it leaves the active zone, before `onDeactivate`. Receives `(offset, element, instance)`. |
+| `onScroll` | `function \| null` | `null` | Called when the element activates, in each frame in which an active element's offset or progress changes, and once more with the value it holds when it leaves the active zone, before `onDeactivate`, or crosses the line without activating. Receives `(offset, element, instance)`. |
 
 Options often come from data attributes, as strings, so a string of digits counts as a number: `nearMargin: '100'` is `100`. An option set to `undefined`, as from a missing attribute, keeps its default. An invalid value, such as a negative `nearMargin`, a `triggerLine` of `'1.2.3vh'` or an empty `activeClass`, logs one warning and falls back to the default: the constructor's for an option given to `register()`, or the built-in one for an option given to the constructor.
 
@@ -598,6 +598,8 @@ When `activateFrom` is `'above'`:
 - Elements will not activate when crossing from below.
 - Once active, deactivation by scrolling back down (element passing above the trigger line) is suppressed.
 
+`activateFrom` decides the state, the classes and `onActivate` and `onDeactivate`. The values follow the element either way: one that crosses the line without activating holds its height and progress 1 past it, or 0 below it, and `onScroll` gets that value once.
+
 A resize that moves the line across an element, such as a phone's toolbar showing or hiding, is filtered the same way, with the direction of the last scroll. An element held active stays held.
 
 Known limit: with `'below'` or `'above'`, a layout change at rest, such as content above the element growing, is filtered with the direction of the last scroll. That direction has nothing to do with the layout change, so the element can miss an activation or stay active past the line.
@@ -622,7 +624,7 @@ Style a child of the observed element, and give the base rule the start state. T
 
 Don't transform the observed element itself, from `--scroll-offset` or from `.is-active`. LineObserver measures it with `getBoundingClientRect()`, which includes transforms, so moving it moves the box being measured, and its state can flip back and forth near the line.
 
-When the element leaves the active zone, the property holds the value it left with: the element's height once its bottom edge passes the line, or `0` once its top edge drops back below it. So the child above stays at full opacity and 60px up past the line, also when the page loads past it, and returns to its start state below the line. The property is removed when the element is unregistered or the observer is destroyed.
+When the element leaves the active zone, or crosses the line without activating because of `activateFrom`, the property holds the value of the side it is on: the element's height once its bottom edge passes the line, or `0` once its top edge drops back below it. So the child above stays at full opacity and 60px up past the line, also when the page loads past it, and returns to its start state below the line. The property is removed when the element is unregistered or the observer is destroyed.
 
 ### --scroll-progress
 

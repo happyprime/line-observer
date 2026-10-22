@@ -4366,6 +4366,75 @@ describe('offset and progress from the position', () => {
 			expect(values()).toEqual({ offset: '0', progress: '0' });
 		});
 
+		it("should hold 0 below the line after 'below' kept it from activating on the way back", () => {
+			const onActivate = vi.fn();
+
+			// A 200px element, 100px below the line.
+			place(600, 800);
+			observer.register(element, { activateFrom: 'below', onActivate, onScroll });
+			report();
+			tick(observer);
+
+			scrollWindowTo(200);
+			place(400, 600);
+			tick(observer);
+			expect(values()).toEqual({ offset: '100', progress: '0.5' });
+
+			scrollWindowTo(350);
+			place(250, 450);
+			tick(observer);
+			expect(values()).toEqual({ offset: '200', progress: '1' });
+
+			// Back up onto it: 'below' keeps it passed, holding 1.
+			scrollWindowTo(200);
+			place(400, 600);
+			tick(observer);
+			expect(observer.instances.get(element).state).toBe('passed');
+			expect(values()).toEqual({ offset: '200', progress: '1' });
+
+			// On until it is below the line.
+			log = [];
+			scrollWindowTo(0);
+			place(600, 800);
+			tick(observer);
+
+			const instance = observer.instances.get(element);
+			expect(instance.state).toBe('inactive');
+			expect(instance.offset).toBe(0);
+			expect(instance.progress).toBe(0);
+			expect(values()).toEqual({ offset: '0', progress: '0' });
+			expect(log).toEqual(['onScroll 0 0']);
+			expect(onActivate).toHaveBeenCalledTimes(1);
+		});
+
+		it("should hold the height past the line after 'above' kept it from activating on the way down", () => {
+			const onActivate = vi.fn();
+
+			// A 200px element, 100px below the line, never active.
+			place(600, 800);
+			observer.register(element, { activateFrom: 'above', onActivate, onScroll });
+			report();
+			tick(observer);
+
+			scrollWindowTo(200);
+			place(400, 600);
+			tick(observer);
+			expect(observer.instances.get(element).state).toBe('inactive');
+			expect(values()).toEqual({ offset: '', progress: '' });
+
+			scrollWindowTo(350);
+			place(250, 450);
+			tick(observer);
+
+			const instance = observer.instances.get(element);
+			expect(instance.state).toBe('passed');
+			expect(instance.offset).toBe(200);
+			expect(instance.progress).toBe(1);
+			expect(values()).toEqual({ offset: '200', progress: '1' });
+			expect(log).toEqual(['onScroll 200 1']);
+			expect(onActivate).not.toHaveBeenCalled();
+		});
+
 		it('should call onScroll with the held value before onDeactivate', () => {
 			const onDeactivate = vi.fn(() => log.push('onDeactivate'));
 
@@ -4757,26 +4826,42 @@ describe('elements that reach the line without a pass on it', () => {
 			near(other);
 			tick(observer);
 
-			// Down past both in one frame: only 'below' activates.
+			// Down past both in one frame: only 'below' activates. Both hold
+			// the value past the line.
 			scrollWindowTo(100);
 			place(element, 460, 500);
 			place(other, 460, 500);
 			tick(observer);
 
-			expect(log).toEqual(['below onActivate', 'below onScroll 40 1', 'below onDeactivate']);
+			expect(log).toEqual([
+				'below onActivate',
+				'below onScroll 40 1',
+				'below onDeactivate',
+				'above onScroll 40 1',
+			]);
 			expect(classes(element)).toEqual(['is-passed']);
 			expect(classes(other)).toEqual(['is-passed']);
+			expect(values(element)).toEqual({ offset: '40', progress: '1' });
+			expect(values(other)).toEqual({ offset: '40', progress: '1' });
 
-			// Up past both in one frame: only 'above' activates.
+			// Up past both in one frame: only 'above' activates. Both hold
+			// the value below the line.
 			log = [];
 			scrollWindowTo(0);
 			place(element, 560, 600);
 			place(other, 560, 600);
 			tick(observer);
 
-			expect(log).toEqual(['above onActivate', 'above onScroll 0 0', 'above onDeactivate']);
+			expect(log).toEqual([
+				'below onScroll 0 0',
+				'above onActivate',
+				'above onScroll 0 0',
+				'above onDeactivate',
+			]);
 			expect(classes(element)).toEqual([]);
 			expect(classes(other)).toEqual([]);
+			expect(values(element)).toEqual({ offset: '0', progress: '0' });
+			expect(values(other)).toEqual({ offset: '0', progress: '0' });
 		});
 	});
 

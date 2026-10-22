@@ -739,11 +739,13 @@ class LineObserver {
 	/**
 	 * Transition instance to new state
 	 *
-	 * An instance that leaves 'active' holds the value it left with: its
-	 * height and progress 1 past the line, or 0 below it. `onScroll` gets
-	 * that value before `onDeactivate` runs. An instance that moves to
-	 * 'active' gets its values from `_apply()`, after every transition in
-	 * the pass.
+	 * An instance that moves to 'passed' or 'inactive' holds the value of
+	 * that side of the line: its height and progress 1 past it, or 0 below
+	 * it. `onScroll` gets that value, before `onDeactivate` if the instance
+	 * was active. This holds for a move between 'passed' and 'inactive' too,
+	 * as when `activateFrom` keeps an element from passing through 'active'.
+	 * An instance that moves to 'active' gets its values from `_apply()`,
+	 * after every transition in the pass.
 	 *
 	 * @param {Object} instance - The observer instance to transition.
 	 * @param {string} newState - The new state ('inactive', 'active', or 'passed').
@@ -768,22 +770,23 @@ class LineObserver {
 		if (newState === 'active') {
 			element.classList.add(options.activeClass);
 			this.activeInstances.add(instance);
-
 			this._call(options, 'onActivate', element, instance);
-		} else if (oldState === 'active') {
-			// Leaving active state
+			return;
+		}
+
+		if (oldState === 'active') {
 			element.classList.remove(options.activeClass);
 			this.activeInstances.delete(instance);
+		}
 
-			const passed = newState === 'passed';
-			instance.offset = passed ? instance.elementHeight : 0;
-			instance.progress = passed ? 1 : 0;
-			this._writeValues(instance);
+		const passed = newState === 'passed';
+		instance.offset = passed ? instance.elementHeight : 0;
+		instance.progress = passed ? 1 : 0;
+		this._writeValues(instance);
 
-			// onScroll can unregister the element.
-			if (this._isRegistered(instance)) {
-				this._call(options, 'onDeactivate', element, instance);
-			}
+		// onScroll can unregister the element.
+		if (oldState === 'active' && this._isRegistered(instance)) {
+			this._call(options, 'onDeactivate', element, instance);
 		}
 	}
 
@@ -1027,9 +1030,9 @@ class LineObserver {
 				through = false;
 			}
 
-			// An element that leaves 'active' is measured too, so the height
+			// An element that changes state is measured too, so the height
 			// it holds past the line is current.
-			if (to === 'active' || from === 'active' || through) {
+			if (to === 'active' || to !== from) {
 				changed = this._measure(instance, rect);
 			}
 		}
