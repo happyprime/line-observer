@@ -70,16 +70,18 @@ const observer = new LineObserver({
 
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
-| `triggerLine` | `string \| number` | `'50vh'` | Where the trigger line sits in the viewport. Accepts px, %, vh, vw units or a raw number (treated as px). |
+| `triggerLine` | `string \| number` | `'50vh'` | Where the trigger line sits in the viewport. Accepts px, %, vh, vw units or a raw number (treated as px). A string with no unit, such as `'200'`, is px too. |
 | `activeClass` | `string` | `'is-active'` | CSS class added to the element while it is in the active zone. |
 | `passedClass` | `string` | `'is-passed'` | CSS class present while the element is past the line: its state is `'passed'`. It gives CSS a stable end state. |
 | `once` | `boolean` | `false` | When true, the element activates the first time it reaches the line, or is found past it, and then LineObserver stops observing it. It keeps `activeClass`, its values are written once, and `onDeactivate` never runs. See [Reveal once](#reveal-once). |
 | `activateFrom` | `string` | `'both'` | Which side the element crosses the trigger line from to activate: `'below'` (scrolling down), `'above'` (scrolling up), or `'both'`. |
-| `nearMargin` | `number` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling, and a second IntersectionObserver reports elements that cross the line without entering the band. Elements with the same trigger line and `nearMargin` share both IntersectionObservers. |
+| `nearMargin` | `number \| string` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling, and a second IntersectionObserver reports elements that cross the line without entering the band. Elements with the same trigger line and `nearMargin` share both IntersectionObservers. |
 | `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` and `--scroll-progress` on each element when its values change. Set to false if you only use callbacks. |
 | `onActivate` | `function \| null` | `null` | Called when an element crosses the trigger line and becomes active, or is found past it. Receives `(element, instance)`. |
 | `onDeactivate` | `function \| null` | `null` | Called when an element leaves the active zone. Receives `(element, instance)`. |
 | `onScroll` | `function \| null` | `null` | Called when the element activates, in each frame in which an active element's offset or progress changes, and once more with the value it holds when it leaves the active zone, before `onDeactivate`. Receives `(offset, element, instance)`. |
+
+Options often come from data attributes, as strings, so a string of digits counts as a number: `nearMargin: '100'` is `100`. An option set to `undefined`, as from a missing attribute, keeps its default. An invalid value, such as a negative `nearMargin`, a `triggerLine` of `'1.2.3vh'` or an empty `activeClass`, logs one warning and falls back to the default: the constructor's for an option given to `register()`, or the built-in one for an option given to the constructor.
 
 ## Methods
 
@@ -209,6 +211,7 @@ An element with no box, such as one with `display: none`, counts as `'inactive'`
 | `'25%'` | 25% of viewport height (equivalent to `'25vh'`) |
 | `'50vw'` | 50% of viewport width |
 | `200` | Raw number, treated as 200px |
+| `'200'` | String with no unit, treated as 200px |
 
 `vh` and `%` lines are measured from `window.innerHeight`, not from the CSS `vh` unit. On a phone, `innerHeight` changes when the browser's toolbar shows or hides, so the line moves with it, and an element whose edge sits between the two positions changes state. A `px` line stays put.
 

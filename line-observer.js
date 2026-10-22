@@ -37,6 +37,38 @@ const STILL_FRAMES = 2;
 // Chromium clamps a larger margin to 33,554,432px.
 const EDGE_REACH = 10000000;
 
+// A number with an optional unit. No unit means px.
+const TRIGGER_LINE = /^(\d+(?:\.\d+)?|\.\d+)(px|%|vh|vw)?$/;
+
+// A number with no unit.
+const DIGITS = /^(\d+(?:\.\d+)?|\.\d+)$/;
+
+/**
+ * Returns whether a value is a trigger line LineObserver can parse.
+ *
+ * @param {*} value - The value.
+ * @return {boolean} True for a finite number of 0 or more, or a string `TRIGGER_LINE` matches.
+ */
+const isTriggerLine = (value) =>
+	(typeof value === 'number' && Number.isFinite(value) && value >= 0) ||
+	(typeof value === 'string' && TRIGGER_LINE.test(value));
+
+/**
+ * Returns a number, or a string of digits as a number, or NaN.
+ *
+ * @param {*} value - The value.
+ * @return {number} The number.
+ */
+const toNumber = (value) => {
+	if (typeof value === 'number') {
+		return value;
+	}
+	if (typeof value === 'string' && DIGITS.test(value)) {
+		return Number(value);
+	}
+	return NaN;
+};
+
 /**
  * Runs one RAF loop, one scroll listener and one resize listener for every LineObserver.
  *
@@ -192,7 +224,7 @@ class LineObserver {
 	 * Create a new LineObserver instance
 	 *
 	 * @param {Object}        options                     - Global default options
-	 * @param {string|number} [options.triggerLine]       - Position of trigger line (px, %, vh, vw)
+	 * @param {string|number} [options.triggerLine]       - Position of trigger line (px, %, vh, vw, or no unit for px)
 	 * @param {string}        [options.activeClass]       - Class added when element is active
 	 * @param {string}        [options.passedClass]       - Class present while element is past the line
 	 * @param {boolean}       [options.once]              - Activate the element once, then stop observing it
@@ -201,7 +233,7 @@ class LineObserver {
 	 *                                                    'below' (element rises from below the line, scrolling down),
 	 *                                                    'above' (element drops from above the line, scrolling up),
 	 *                                                    or 'both' (default)
-	 * @param {number}        [options.nearMargin]        - IO band half-width in px (default: 100). Larger values
+	 * @param {number|string} [options.nearMargin]        - IO band half-width in px (default: 100). Larger values
 	 *                                                    detect elements earlier; smaller values are more efficient.
 	 * @param {boolean}       [options.cssCustomProperty] - Set --scroll-offset and --scroll-progress (default: true)
 	 * @param {Function}      [options.onActivate]        - Callback when element becomes active
@@ -210,7 +242,7 @@ class LineObserver {
 	 *                                                    once with the value it holds when it leaves
 	 */
 	constructor(options = {}) {
-		this.defaults = {
+		const defaults = {
 			triggerLine: '50vh',
 			activeClass: 'is-active',
 			passedClass: 'is-passed',
@@ -225,7 +257,10 @@ class LineObserver {
 
 		this.destroyed = false;
 
-		this.defaults = { ...this.defaults, ...options };
+		this.defaults = {
+			...defaults,
+			...this._checkOptions(options, defaults),
+		};
 
 		// Instance tracking
 		this.instances = new Map();
@@ -261,24 +296,23 @@ class LineObserver {
 	/**
 	 * Parse trigger line value to pixels
 	 *
-	 * @param {string|number} value - Trigger line value (px, %, vh, vw)
+	 * @param {string|number} value - Trigger line value (px, %, vh, vw, or no unit for px)
 	 * @return {number}              Pixel value
 	 */
 	parseTriggerLine(value) {
-		if (typeof value === 'number') {
-			return value;
-		}
-
-		const match = String(value).match(/^([\d.]+)(px|%|vh|vw)$/);
-		if (!match) {
+		if (!isTriggerLine(value)) {
 			console.warn(
 				`LineObserver: Invalid trigger line format "${value}", defaulting to 50vh`
 			);
 			return this.viewportHeight * 0.5;
 		}
 
-		const num = parseFloat(match[1]);
-		const unit = match[2];
+		if (typeof value === 'number') {
+			return value;
+		}
+
+		const [, digits, unit = 'px'] = value.match(TRIGGER_LINE);
+		const num = Number(digits);
 
 		const unitHandlers = {
 			px: num,
@@ -288,6 +322,82 @@ class LineObserver {
 		};
 
 		return unitHandlers[unit];
+	}
+
+	/**
+	 * Returns the options without `undefined` values, and with each invalid value replaced by its default and one warning.
+	 *
+	 * Options often come from data attributes, as strings. A string of
+	 * digits is a number: `nearMargin: '100'` is 100, and a `triggerLine` of
+	 * `'200'` is 200px. An `undefined` value, as from a missing attribute,
+	 * leaves the default in place.
+	 *
+	 * @param {Object} options  - The options given.
+	 * @param {Object} defaults - The values to fall back on.
+	 * @return {Object} The options to merge over `defaults`.
+	 * @private
+	 */
+	_checkOptions(options, defaults) {
+		const checked = {};
+
+		for (const [key, value] of Object.entries(options || {})) {
+			if (value !== undefined) {
+				checked[key] = value;
+			}
+		}
+
+		const fallBack = (key, message) => {
+			console.warn(`LineObserver: ${message}`);
+			checked[key] = defaults[key];
+		};
+
+		if ('triggerLine' in checked && !isTriggerLine(checked.triggerLine)) {
+			fallBack(
+				'triggerLine',
+				`Invalid trigger line format "${checked.triggerLine}", defaulting to ${defaults.triggerLine}`
+			);
+		}
+
+		if ('nearMargin' in checked) {
+			const margin = toNumber(checked.nearMargin);
+
+			if (Number.isFinite(margin) && margin >= 0) {
+				checked.nearMargin = margin;
+			} else {
+				fallBack(
+					'nearMargin',
+					`Invalid nearMargin "${checked.nearMargin}", defaulting to ${defaults.nearMargin}`
+				);
+			}
+		}
+
+		// classList.add() throws on an empty string or one with a space.
+		for (const key of ['activeClass', 'passedClass']) {
+			if (
+				key in checked &&
+				!(
+					typeof checked[key] === 'string' &&
+					/^\S+$/.test(checked[key])
+				)
+			) {
+				fallBack(
+					key,
+					`Invalid ${key} "${checked[key]}", defaulting to "${defaults[key]}"`
+				);
+			}
+		}
+
+		if (
+			'activateFrom' in checked &&
+			!['both', 'below', 'above'].includes(checked.activateFrom)
+		) {
+			fallBack(
+				'activateFrom',
+				`Unsupported activateFrom "${checked.activateFrom}"`
+			);
+		}
+
+		return checked;
 	}
 
 	/**
@@ -688,15 +798,10 @@ class LineObserver {
 			return this;
 		}
 
-		const mergedOptions = { ...this.defaults, ...options };
-
-		const validActivateFrom = ['both', 'below', 'above'];
-		if (!validActivateFrom.includes(mergedOptions.activateFrom)) {
-			console.warn(
-				`LineObserver: Unsupported activateFrom "${mergedOptions.activateFrom}"`
-			);
-			mergedOptions.activateFrom = 'both';
-		}
+		const mergedOptions = {
+			...this.defaults,
+			...this._checkOptions(options, this.defaults),
+		};
 
 		const instance = {
 			element,

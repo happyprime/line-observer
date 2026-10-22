@@ -5228,3 +5228,184 @@ describe('a resize', () => {
 		});
 	});
 });
+
+describe('option values', () => {
+	let observer;
+	let element;
+	let warn;
+
+	const place = (top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	// The IntersectionObservers watching the element, near one first.
+	const observersOf = (target) =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(target)
+		);
+
+	const warnings = () => warn.mock.calls.map(([message]) => message);
+
+	beforeEach(() => {
+		warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		// The line is at 500 on the 1000px viewport.
+		observer = new LineObserver();
+		element = document.createElement('div');
+		document.body.append(element);
+		place(1300, 1600);
+	});
+
+	afterEach(() => {
+		element.remove();
+	});
+
+	describe('from data attributes, as strings', () => {
+		it('should take a nearMargin of digits as a number', () => {
+			observer.register(element, { nearMargin: '100' });
+
+			expect(observer.instances.get(element).options.nearMargin).toBe(100);
+			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect(warnings()).toEqual([]);
+		});
+
+		it('should take a triggerLine with no unit as px', () => {
+			const other = document.createElement('div');
+			document.body.append(other);
+			other.getBoundingClientRect = vi.fn().mockReturnValue({ top: 1300, bottom: 1600 });
+
+			observer.register(element, { triggerLine: '200' });
+			observer.register(other, { triggerLine: '0' });
+
+			expect(observer.instances.get(element).triggerLinePx).toBe(200);
+			expect(observer.instances.get(other).triggerLinePx).toBe(0);
+			expect(observer.parseTriggerLine('12.5')).toBe(12.5);
+			expect(warnings()).toEqual([]);
+
+			other.remove();
+		});
+
+		it('should keep the defaults for options that are undefined, as from a missing attribute', () => {
+			const dataset = {};
+
+			place(400, 700);
+			expect(() =>
+				observer.register(element, {
+					triggerLine: dataset.triggerLine,
+					nearMargin: dataset.nearMargin,
+					activeClass: dataset.activeClass,
+					passedClass: dataset.passedClass,
+					activateFrom: dataset.activateFrom,
+				})
+			).not.toThrow();
+
+			const { options, triggerLinePx } = observer.instances.get(element);
+			expect(options.nearMargin).toBe(100);
+			expect(triggerLinePx).toBe(500);
+			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect([...element.classList]).toEqual(['is-active']);
+			expect(warnings()).toEqual([]);
+		});
+
+		it('should keep the defaults for constructor options that are undefined', () => {
+			const custom = new LineObserver({
+				triggerLine: undefined,
+				activeClass: undefined,
+				nearMargin: undefined,
+			});
+
+			expect(custom.defaults.triggerLine).toBe('50vh');
+			expect(custom.defaults.activeClass).toBe('is-active');
+			expect(custom.defaults.nearMargin).toBe(100);
+		});
+	});
+
+	describe('that are invalid', () => {
+		it.each([
+			['NaN', NaN],
+			['Infinity', Infinity],
+			['-10', -10],
+			['-10px', '-10px'],
+			['1.2.3vh', '1.2.3vh'],
+			['50 vh', '50 vh'],
+			['', ''],
+		])('should warn once and use the default for a triggerLine of %s', (label, triggerLine) => {
+			expect(() => observer.register(element, { triggerLine })).not.toThrow();
+
+			expect(observer.instances.get(element).triggerLinePx).toBe(500);
+			expect(warnings()).toEqual([
+				`LineObserver: Invalid trigger line format "${triggerLine}", defaulting to 50vh`,
+			]);
+		});
+
+		it.each([
+			['-50', -50],
+			['NaN', NaN],
+			['Infinity', Infinity],
+			['null', null],
+			['abc', 'abc'],
+			['1e2', '1e2'],
+			['an empty string', ''],
+		])('should warn once and use the default for a nearMargin of %s', (label, nearMargin) => {
+			expect(() => observer.register(element, { nearMargin })).not.toThrow();
+
+			expect(observer.instances.get(element).options.nearMargin).toBe(100);
+			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect(warnings()).toEqual([
+				`LineObserver: Invalid nearMargin "${nearMargin}", defaulting to 100`,
+			]);
+		});
+
+		it.each([
+			['activeClass', '', 'is-active'],
+			['activeClass', 'is on', 'is-active'],
+			['activeClass', null, 'is-active'],
+			['passedClass', '', 'is-passed'],
+			['passedClass', 7, 'is-passed'],
+		])('should warn once and use the default for %s "%s"', (key, value, fallback) => {
+			// Past the line, so register() adds both classes in turn.
+			place(100, 400);
+
+			expect(() => observer.register(element, { [key]: value })).not.toThrow();
+
+			expect(observer.instances.get(element).options[key]).toBe(fallback);
+			expect(warnings()).toEqual([
+				`LineObserver: Invalid ${key} "${value}", defaulting to "${fallback}"`,
+			]);
+		});
+
+		it("should fall back to the observer's default, not the built-in one", () => {
+			const custom = new LineObserver({ nearMargin: 50, triggerLine: '30vh' });
+
+			custom.register(element, { nearMargin: 'wide', triggerLine: 'high' });
+
+			const { options, triggerLinePx } = custom.instances.get(element);
+			expect(options.nearMargin).toBe(50);
+			expect(triggerLinePx).toBe(300);
+		});
+
+		it('should warn once for an invalid constructor option, not once for each element', () => {
+			const other = document.createElement('div');
+			document.body.append(other);
+			other.getBoundingClientRect = vi.fn().mockReturnValue({ top: 1300, bottom: 1600 });
+
+			const custom = new LineObserver({ nearMargin: '-1', activeClass: '' });
+			custom.register(element);
+			custom.register(other);
+
+			expect(custom.defaults.nearMargin).toBe(100);
+			expect(custom.defaults.activeClass).toBe('is-active');
+			expect(warnings()).toEqual([
+				'LineObserver: Invalid nearMargin "-1", defaulting to 100',
+				'LineObserver: Invalid activeClass "", defaulting to "is-active"',
+			]);
+
+			other.remove();
+		});
+
+		it('should still take null in place of options', () => {
+			expect(() => new LineObserver(null)).not.toThrow();
+			expect(() => observer.register(element, null)).not.toThrow();
+			expect(observer.instances.get(element).options.triggerLine).toBe('50vh');
+		});
+	});
+});
