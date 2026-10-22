@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: resize</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		/* Heights in px, so a resize moves nothing on the page. */
+		.gap {
+			height: 1200px;
+		}
+
+		.gap.short {
+			height: 600px;
+		}
+
+		.row {
+			display: flex;
+			gap: 8px;
+			align-items: flex-start;
+			margin: 0 16px;
+		}
+
+		.row .box {
+			flex: 1;
+			margin: 0;
+		}
+
+		.box.is-passed {
+			background: #e8e8e8;
+		}
+
+		#request {
+			font-weight: 600;
+		}
+	</style>
+	<script>
+		// Runs before the library loads, so every IntersectionObserver it
+		// creates, and every element it observes, is counted.
+		window.ioCreated = 0;
+		window.ioObserved = 0;
+		const NativeIntersectionObserver = window.IntersectionObserver;
+		const nativeObserve = NativeIntersectionObserver.prototype.observe;
+		NativeIntersectionObserver.prototype.observe = function (...args) {
+			window.ioObserved++;
+			return nativeObserve.apply(this, args);
+		};
+		window.IntersectionObserver = function (callback, options) {
+			window.ioCreated++;
+			return new NativeIntersectionObserver(callback, options);
+		};
+	</script>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. A phone's toolbar showing or hiding resizes the viewport's height, and a <code>50vh</code> line moves with it. Here the check changes the viewport and keeps the scroll position. H (<code>'below'</code>) and G (<code>'above'</code>) are held active by the direction of the last scroll and must stay held. S spans the line and must not change. P has a <code>200px</code> line of its own: a width-only resize must build no IntersectionObserver for it or anyone else.</p>
+		<p>By hand: open the browser's device toolbar, press Run check, and set the viewport to each size shown here: <span id="request">none asked for</span>.</p>
+		<nav>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>IntersectionObservers created: <strong id="io">0</strong>. Elements observed: <strong id="observed">0</strong>.</p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="gap"></div>
+		<div class="row">
+			<section class="box" id="h" style="height: 600px">
+				<strong>H</strong>, <code>'below'</code>
+				<div class="readout">inactive</div>
+			</section>
+			<section class="box" id="s" style="height: 1300px; margin-top: -400px">
+				<strong>S</strong>, <code>'both'</code>
+				<div class="readout">inactive</div>
+			</section>
+			<section class="box" id="p" style="height: 300px">
+				<strong>P</strong>, line at 200px
+				<div class="readout">inactive</div>
+			</section>
+		</div>
+		<div class="gap"></div>
+		<section class="box" id="g" style="height: 400px">
+			<strong>G</strong>, <code>'above'</code>
+			<div class="readout">inactive</div>
+		</section>
+		<div class="gap"></div>
+	</main>
+
+	<script src="../build/line-observer.js"></script>
+	<script src="js/check.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, setUpChecks } = window.demoCheck;
+
+		const h = document.getElementById('h');
+		const s = document.getElementById('s');
+		const p = document.getElementById('p');
+		const g = document.getElementById('g');
+
+		// The onActivate and onDeactivate calls for each box, as 'A' and 'D'.
+		const calls = { h: [], s: [], p: [], g: [] };
+
+		const show = (box) => {
+			box.querySelector('.readout').textContent = box.classList.contains('is-active')
+				? 'active'
+				: box.classList.contains('is-passed')
+					? 'passed'
+					: 'inactive';
+		};
+
+		const callbacks = (activateFrom = 'both') => ({
+			activateFrom,
+			onActivate: (box) => {
+				calls[box.id].push('A');
+				show(box);
+			},
+			onDeactivate: (box) => {
+				calls[box.id].push('D');
+				show(box);
+			},
+		});
+
+		const observer = new LineObserver({ triggerLine: '50vh' });
+		observer.register(h, callbacks('below'));
+		observer.register(s, callbacks());
+		observer.register(g, callbacks('above'));
+
+		const pxObserver = new LineObserver({ triggerLine: '200px' });
+		pxObserver.register(p, callbacks());
+
+		setInterval(() => {
+			document.getElementById('io').textContent = window.ioCreated;
+			document.getElementById('observed').textContent = window.ioObserved;
+		}, 250);
+
+		// Asks for a viewport size and waits until the page has it, then
+		// for the debounced resize pass. The runner, or a person with the
+		// device toolbar, sets it.
+		const setViewport = async (width, height) => {
+			if (window.innerWidth !== width || window.innerHeight !== height) {
+				window.__viewportRequest = { width, height };
+				document.getElementById('request').textContent = `${width} × ${height}`;
+				while (window.innerWidth !== width || window.innerHeight !== height) {
+					await waitFrames(1);
+				}
+				document.getElementById('request').textContent = 'none asked for';
+			}
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			await waitFrames();
+		};
+
+		const width = window.innerWidth;
+		const height = window.innerHeight;
+
+		// The toolbar shows, hides, shows and hides again.
+		const toolbar = async () => {
+			for (const next of [height - 84, height, height - 84, height]) {
+				await setViewport(width, next);
+			}
+		};
+
+		const reset = () => Object.values(calls).forEach((list) => (list.length = 0));
+
+		setUpChecks([
+			{
+				name: "Height back and forth at a constant scroll: H, held by 'below', stays held, and S does not change",
+				run: async () => {
+					await setViewport(width, height);
+					await jump(lineInto(h, -150));
+					// Down onto H, then up until its top is 40px below the line.
+					await jump(lineInto(h, 100));
+					await jump(lineInto(h, -40));
+					const scrollY = window.scrollY;
+					const held = h.classList.contains('is-active');
+					reset();
+					await toolbar();
+					return {
+						expected: { held: true, hActive: true, hCalls: [], sCalls: [], scrollY },
+						actual: {
+							held,
+							hActive: h.classList.contains('is-active'),
+							hCalls: [...calls.h],
+							sCalls: [...calls.s],
+							scrollY: window.scrollY,
+						},
+					};
+				},
+			},
+			{
+				name: "Height back and forth after a scroll down: G, held past the line by 'above', does not flip",
+				run: async () => {
+					await setViewport(width, height);
+					await jump(lineInto(g, g.offsetHeight + 150));
+					// Up onto G, then down until its bottom is 40px above the line.
+					await jump(lineInto(g, g.offsetHeight - 100));
+					await jump(lineInto(g, g.offsetHeight + 40));
+					const held = g.classList.contains('is-active');
+					reset();
+					await toolbar();
+					return {
+						expected: { held: true, gActive: true, gCalls: [] },
+						actual: {
+							held,
+							gActive: g.classList.contains('is-active'),
+							gCalls: [...calls.g],
+						},
+					};
+				},
+			},
+			{
+				name: 'Width only, narrower and back: no IntersectionObserver is built, and nothing changes state',
+				run: async () => {
+					await setViewport(width, height);
+					await jump(lineInto(h, 100));
+					const created = window.ioCreated;
+					const observed = window.ioObserved;
+					reset();
+					await setViewport(width - 60, height);
+					await setViewport(width, height);
+					return {
+						expected: { created: 0, observed: 0, calls: { h: [], s: [], p: [], g: [] } },
+						actual: {
+							created: window.ioCreated - created,
+							observed: window.ioObserved - observed,
+							calls: structuredClone(calls),
+						},
+					};
+				},
+			},
+		]);
+	</script>
+</body>
+</html>
