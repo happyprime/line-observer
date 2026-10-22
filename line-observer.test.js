@@ -911,6 +911,10 @@ describe('LineObserver', () => {
 
 			const initialObserverCount = MockIntersectionObserver.instances.length;
 
+			Object.defineProperty(window, 'innerHeight', {
+				value: 800,
+				configurable: true,
+			});
 			resize();
 			vi.advanceTimersByTime(200);
 
@@ -1755,6 +1759,10 @@ describe('resize state re-evaluation', () => {
 			top: 400,
 			bottom: 700,
 		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: 900,
+			configurable: true,
+		});
 
 		// Trigger resize handler
 		resize();
@@ -1923,7 +1931,7 @@ describe('checkInitialState with activateFrom', () => {
 });
 
 describe('resize with activateFrom', () => {
-	it('should activate on resize regardless of activateFrom', () => {
+	it('should activate on resize when activateFrom allows the last direction', () => {
 		vi.useFakeTimers();
 		const observer = new LineObserver({ triggerLine: '50vh' });
 		const element = document.createElement('div');
@@ -1947,11 +1955,16 @@ describe('resize with activateFrom', () => {
 			top: 400,
 			bottom: 700,
 		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: 900,
+			configurable: true,
+		});
 
 		resize();
 		vi.advanceTimersByTime(200);
 
-		// Should activate despite activateFrom filtering (resize has no scroll direction)
+		// The last scroll went down, the way 'below' activates.
+		expect(observer.getDirection()).toBe('down');
 		expect(instance.state).toBe('active');
 
 		document.body.removeChild(element);
@@ -2344,7 +2357,7 @@ describe('offset precision', () => {
 		const instance = observer.instances.get(element);
 		expect(instance.state).toBe('inactive');
 
-		// After resize, element now spans trigger line
+		// After resize, element now spans trigger line, which is at 550.
 		Object.defineProperty(window, 'scrollY', {
 			value: 100,
 			configurable: true,
@@ -2353,13 +2366,17 @@ describe('offset precision', () => {
 			top: 300,
 			bottom: 700,
 		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: 1100,
+			configurable: true,
+		});
 
 		resize();
 		vi.advanceTimersByTime(200);
 
 		expect(instance.state).toBe('active');
-		expect(instance.offset).toBe(200);
-		expect(element.style.getPropertyValue('--scroll-offset')).toBe('200');
+		expect(instance.offset).toBe(250);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('250');
 
 		document.body.removeChild(element);
 		observer.destroy();
@@ -4995,6 +5012,219 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 			expect(observersOf(a)).toEqual(MockIntersectionObserver.instances.slice(2));
 			thirdNear.trigger([{ isIntersecting: true, target: a }]);
 			expect(third.nearInstances.size).toBe(1);
+		});
+	});
+});
+
+describe('a resize', () => {
+	let observer;
+	let a;
+	let b;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const setSize = (width, height) => {
+		Object.defineProperty(window, 'innerWidth', {
+			value: width,
+			configurable: true,
+		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: height,
+			configurable: true,
+		});
+	};
+
+	// Fires a resize and lets its debounced pass run.
+	const resizeTo = (width, height) => {
+		setSize(width, height);
+		resize();
+		vi.advanceTimersByTime(200);
+	};
+
+	// The IntersectionObservers watching an element, near one first.
+	const observersOf = (target) =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(target)
+		);
+
+	const report = (element) =>
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(element)
+		);
+
+	beforeEach(() => {
+		// Frames still come from the queue.
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		// The line is at 500 on the 1920x1000 viewport.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		a = document.createElement('div');
+		b = document.createElement('div');
+		document.body.append(a, b);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		a.remove();
+		b.remove();
+	});
+
+	describe('that leaves the lines where they were', () => {
+		it('should do nothing when the size has not changed', () => {
+			place(a, 400, 700);
+			place(b, 1300, 1600);
+			observer.register(a);
+			observer.register(b);
+			const created = MockIntersectionObserver.instances.length;
+			a.getBoundingClientRect.mockClear();
+			b.getBoundingClientRect.mockClear();
+
+			resizeTo(1920, 1000);
+
+			expect(MockIntersectionObserver.instances).toHaveLength(created);
+			expect(a.getBoundingClientRect).not.toHaveBeenCalled();
+			expect(b.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it('should build no IntersectionObservers on a width-only resize', () => {
+			place(a, 400, 700);
+			place(b, 1300, 1600);
+			observer.register(a);
+			observer.register(b, { triggerLine: '200px' });
+			const before = [...observersOf(a), ...observersOf(b)];
+			const created = MockIntersectionObserver.instances.length;
+			b.getBoundingClientRect.mockClear();
+
+			resizeTo(1200, 1000);
+
+			expect(MockIntersectionObserver.instances).toHaveLength(created);
+			expect([...observersOf(a), ...observersOf(b)]).toEqual(before);
+			expect(observer.viewportWidth).toBe(1200);
+
+			// `b` is not active and its line did not move, so it is not read.
+			expect(b.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it("should read an active element, whose height a reflow can change", () => {
+			const onScroll = vi.fn();
+			place(a, 300, 700);
+			observer.register(a, { onScroll });
+			expect(observer.instances.get(a).progress).toBe(0.5);
+
+			// The narrower page wraps more lines, and `a` grows to 800px.
+			place(a, 300, 1100);
+			resizeTo(1200, 1000);
+
+			expect(observer.instances.get(a).progress).toBe(0.25);
+			expect(onScroll).toHaveBeenLastCalledWith(200, a, observer.instances.get(a));
+		});
+
+		it('should give a px line new rootMargins on a height change, and read no inactive element', () => {
+			place(a, 1300, 1600);
+			observer.register(a, { triggerLine: '200px' });
+			const [near, edge] = observersOf(a);
+			expect(edge.options.rootMargin).toBe('10000000px 0px -800px 0px');
+			a.getBoundingClientRect.mockClear();
+
+			resizeTo(1920, 800);
+
+			const [newNear, newEdge] = observersOf(a);
+			expect(newNear).not.toBe(near);
+			expect(newEdge.options.rootMargin).toBe('10000000px 0px -600px 0px');
+			expect(observer.instances.get(a).triggerLinePx).toBe(200);
+			expect(a.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it("should move only a vw line's elements on a width-only resize", () => {
+			place(a, 450, 700);
+			place(b, 1300, 1600);
+			observer.register(a, { triggerLine: '25vw' });
+			observer.register(b);
+			expect(observer.instances.get(a).state).toBe('active');
+			const bObservers = observersOf(b);
+			const created = MockIntersectionObserver.instances.length;
+
+			// The line moves from 480 to 400, above `a`.
+			resizeTo(1600, 1000);
+
+			expect(MockIntersectionObserver.instances).toHaveLength(created + 2);
+			expect(observersOf(b)).toEqual(bObservers);
+			expect(observer.instances.get(a).triggerLinePx).toBe(400);
+			expect(observer.instances.get(a).state).toBe('inactive');
+		});
+	});
+
+	describe('with activateFrom', () => {
+		it("should keep an element 'below' holds active held when the line moves away from it", () => {
+			const onDeactivate = vi.fn();
+
+			// Down onto `a`, then up until it is below the line. 'below'
+			// holds it active.
+			place(a, 520, 820);
+			observer.register(a, { activateFrom: 'below', onDeactivate });
+			report(a);
+			tick(observer);
+			scrollWindowTo(100);
+			place(a, 420, 720);
+			tick(observer);
+			scrollWindowTo(0);
+			place(a, 520, 820);
+			tick(observer);
+			expect(observer.instances.get(a).state).toBe('active');
+			expect(observer.getDirection()).toBe('up');
+
+			// The toolbar shows, then hides, twice. The line moves 500, 420,
+			// 500, 420, 500.
+			for (const height of [840, 1000, 840, 1000]) {
+				resizeTo(1920, height);
+			}
+
+			expect(observer.instances.get(a).state).toBe('active');
+			expect(onDeactivate).not.toHaveBeenCalled();
+		});
+
+		it("should keep an element 'above' holds active past the line held", () => {
+			const onDeactivate = vi.fn();
+
+			// `a` is past the line at register(). Up onto it, then down
+			// until it is past the line again.
+			scrollWindowTo(1000);
+			place(a, 100, 400);
+			observer.register(a, { activateFrom: 'above', onDeactivate });
+			onDeactivate.mockClear();
+			report(a);
+			tick(observer);
+			scrollWindowTo(900);
+			place(a, 200, 600);
+			tick(observer);
+			expect(observer.instances.get(a).state).toBe('active');
+			scrollWindowTo(1000);
+			place(a, 100, 400);
+			tick(observer);
+			expect(observer.instances.get(a).state).toBe('active');
+
+			// A shorter viewport moves the line up to 420, still below `a`.
+			resizeTo(1920, 840);
+
+			expect(observer.instances.get(a).state).toBe('active');
+			expect(onDeactivate).not.toHaveBeenCalled();
+		});
+
+		it("should not activate a 'below' element the line moves onto after a scroll up", () => {
+			const onActivate = vi.fn();
+
+			scrollWindowTo(200);
+			scrollWindowTo(100);
+			place(a, 520, 820);
+			observer.register(a, { activateFrom: 'below', onActivate });
+
+			// A taller viewport moves the line down to 550, across `a`.
+			resizeTo(1920, 1100);
+
+			expect(observer.instances.get(a).state).toBe('inactive');
+			expect(onActivate).not.toHaveBeenCalled();
 		});
 	});
 });

@@ -210,6 +210,8 @@ An element with no box, such as one with `display: none`, counts as `'inactive'`
 | `'50vw'` | 50% of viewport width |
 | `200` | Raw number, treated as 200px |
 
+`vh` and `%` lines are measured from `window.innerHeight`, not from the CSS `vh` unit. On a phone, `innerHeight` changes when the browser's toolbar shows or hides, so the line moves with it, and an element whose edge sits between the two positions changes state. A `px` line stays put.
+
 ```js
 // Trigger near the top of the viewport
 new LineObserver({ triggerLine: '10vh' });
@@ -245,6 +247,8 @@ When `activateFrom` is `'above'`:
 - Elements activate only when they first touch the trigger line from above (user scrolling up).
 - Elements will not activate when crossing from below.
 - Once active, deactivation by scrolling back down (element passing above the trigger line) is suppressed.
+
+A resize that moves the line across an element, such as a phone's toolbar showing or hiding, is filtered the same way, with the direction of the last scroll. An element held active stays held.
 
 Known limit: with `'below'` or `'above'`, a layout change at rest, such as content above the element growing, is filtered with the direction of the last scroll. That direction has nothing to do with the layout change, so the element can miss an activation or stay active past the line.
 

@@ -349,45 +349,68 @@ class LineObserver {
 	}
 
 	/**
-	 * Observes the element with the near and edge IntersectionObservers for its rootMargins.
+	 * Observes the element with the near and edge IntersectionObservers for its rootMargins, and moves it off one whose rootMargin no longer fits.
+	 *
+	 * An element that stays in the same IntersectionObserver is left alone,
+	 * so it gets no new first report.
 	 *
 	 * @param {Object} instance - The observer instance.
 	 * @private
 	 */
 	_observe(instance) {
-		instance.near = this._join(
-			this.nearObservers,
-			this._nearRootMargin(instance),
-			this.handleIntersection,
-			instance
-		);
-		instance.edge = this._join(
-			this.edgeObservers,
-			this._edgeRootMargin(instance),
-			this.handleEdgeIntersection,
-			instance
-		);
+		for (const [key, observers, rootMargin, handle] of [
+			[
+				'near',
+				this.nearObservers,
+				this._nearRootMargin(instance),
+				this.handleIntersection,
+			],
+			[
+				'edge',
+				this.edgeObservers,
+				this._edgeRootMargin(instance),
+				this.handleEdgeIntersection,
+			],
+		]) {
+			const current = instance[key];
+
+			if (current && current.rootMargin === rootMargin) {
+				continue;
+			}
+			if (current) {
+				this._leave(observers, current, instance.element);
+			}
+			instance[key] = this._join(observers, rootMargin, handle, instance);
+		}
 	}
 
 	/**
-	 * Stops observing the element, and disconnects an IntersectionObserver left with no elements.
+	 * Stops observing the element.
 	 *
 	 * @param {Object} instance - The observer instance.
 	 * @private
 	 */
 	_unobserve(instance) {
-		for (const [observers, shared] of [
-			[this.nearObservers, instance.near],
-			[this.edgeObservers, instance.edge],
-		]) {
-			shared.instances.delete(instance.element);
+		this._leave(this.nearObservers, instance.near, instance.element);
+		this._leave(this.edgeObservers, instance.edge, instance.element);
+	}
 
-			if (shared.instances.size === 0) {
-				shared.observer.disconnect();
-				observers.delete(shared.rootMargin);
-			} else {
-				shared.observer.unobserve(instance.element);
-			}
+	/**
+	 * Removes the element from a shared IntersectionObserver, and disconnects it if no element is left.
+	 *
+	 * @param {Map}     observers - The near or edge observers, by rootMargin.
+	 * @param {Object}  shared    - The shared observer the element is in.
+	 * @param {Element} element   - The element.
+	 * @private
+	 */
+	_leave(observers, shared, element) {
+		shared.instances.delete(element);
+
+		if (shared.instances.size === 0) {
+			shared.observer.disconnect();
+			observers.delete(shared.rootMargin);
+		} else {
+			shared.observer.unobserve(element);
 		}
 	}
 
@@ -844,7 +867,7 @@ class LineObserver {
 	 *
 	 * @param {Object}  instance - The observer instance to read.
 	 * @param {boolean} filter   - Whether `activateFrom` applies. It does not
-	 *                           at registration or after a resize.
+	 *                           at registration.
 	 * @return {Object|null} `{ instance, from, to, through, changed }`, or null.
 	 * @private
 	 */
@@ -1092,31 +1115,48 @@ class LineObserver {
 	 * Like `_readFrame()`, it writes nothing to the DOM. `_apply()` writes the
 	 * changes.
 	 *
+	 * An element is read if its line moved, or if it is active, since a
+	 * resize can reflow the page and change its height. Any other element a
+	 * reflow moves across the line or the band gets an IO report.
+	 *
+	 * `activateFrom` filters these transitions by the direction of the last
+	 * scroll, so an element it holds active stays held. On a phone, the
+	 * toolbar showing or hiding resizes the viewport.
+	 *
 	 * @return {Object[]} Results of `_read()`.
 	 * @private
 	 */
 	_readResize() {
-		this.viewportHeight = window.innerHeight;
-		this.viewportWidth = window.innerWidth;
+		const height = window.innerHeight;
+		const width = window.innerWidth;
+
+		if (height === this.viewportHeight && width === this.viewportWidth) {
+			return [];
+		}
+
+		this.viewportHeight = height;
+		this.viewportWidth = width;
 
 		const changes = [];
 
-		// Recalculate trigger line, observe again, and re-check states. The
-		// line can move, so an element that stays active gets fresh values
-		// too.
 		for (const instance of this.instances.values()) {
 			if (!instance.element.isConnected) {
 				continue;
 			}
-			this._unobserve(instance);
-			instance.triggerLinePx = this.parseTriggerLine(
-				instance.options.triggerLine
-			);
+
+			const line = this.parseTriggerLine(instance.options.triggerLine);
+			const moved = line !== instance.triggerLinePx;
+
+			// The rootMargins depend on the viewport height as well as the
+			// line, so a px line that stays put can still need new ones.
+			instance.triggerLinePx = line;
 			this._observe(instance);
 
-			const change = this._read(instance, false);
-			if (change) {
-				changes.push(change);
+			if (moved || instance.state === 'active') {
+				const change = this._read(instance, true);
+				if (change) {
+					changes.push(change);
+				}
 			}
 		}
 
