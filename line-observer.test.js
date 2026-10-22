@@ -3063,3 +3063,193 @@ describe('read and write order', () => {
 		expect(readsAfterFirstWrite()).toEqual([]);
 	});
 });
+
+describe('a pass at rest', () => {
+	let observer;
+	let active;
+	let other;
+	let onScroll;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const report = (element, isIntersecting) => {
+		observer.handleIntersection(
+			[{ isIntersecting }],
+			observer.instances.get(element)
+		);
+	};
+
+	beforeEach(() => {
+		// The line is at 500. `active` lies across it and is near.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		active = document.createElement('div');
+		other = document.createElement('div');
+		for (const element of [active, other]) {
+			Object.defineProperty(element, 'offsetHeight', {
+				value: 300,
+				configurable: true,
+			});
+			document.body.append(element);
+		}
+
+		onScroll = vi.fn();
+		place(active, 300, 600);
+		observer.register(active, { onScroll });
+		report(active, true);
+		observer.tick();
+		expect(observer.instances.get(active).state).toBe('active');
+
+		vi.spyOn(active.style, 'setProperty');
+		active.getBoundingClientRect.mockClear();
+		onScroll.mockClear();
+	});
+
+	afterEach(() => {
+		active.remove();
+		other.remove();
+		observer.destroy();
+	});
+
+	it('should leave an active element alone when another element is reported', () => {
+		// `other` comes near below the line with the page at rest.
+		place(other, 1300, 1600);
+		observer.register(other);
+		place(other, 550, 850);
+		report(other, true);
+		observer.tick();
+
+		expect(other.getBoundingClientRect).toHaveBeenCalled();
+		expect(observer.instances.get(other).state).toBe('inactive');
+		expect(active.getBoundingClientRect).not.toHaveBeenCalled();
+		expect(active.style.setProperty).not.toHaveBeenCalled();
+		expect(onScroll).not.toHaveBeenCalled();
+	});
+
+	it('should activate a reported element without touching other active elements', () => {
+		const otherScroll = vi.fn();
+
+		// Content above `other` collapses and leaves it across the line,
+		// 120px past its top edge.
+		place(other, 1300, 1600);
+		observer.register(other, { onScroll: otherScroll });
+		place(other, 380, 680);
+		report(other, true);
+		observer.tick();
+
+		const instance = observer.instances.get(other);
+		expect(instance.state).toBe('active');
+		expect(other.style.getPropertyValue('--scroll-offset')).toBe('120');
+		expect(otherScroll).toHaveBeenCalledWith(120, other, instance);
+		expect(active.getBoundingClientRect).not.toHaveBeenCalled();
+		expect(active.style.setProperty).not.toHaveBeenCalled();
+		expect(onScroll).not.toHaveBeenCalled();
+	});
+
+	it('should read only the reported elements', () => {
+		const near = document.createElement('div');
+		document.body.append(near);
+
+		// `near` is in the band but was reported before the last pass.
+		place(near, 560, 860);
+		observer.register(near);
+		report(near, true);
+		observer.tick();
+		near.getBoundingClientRect.mockClear();
+
+		place(other, 1300, 1600);
+		observer.register(other);
+		place(other, 550, 850);
+		report(other, true);
+		observer.tick();
+
+		expect(other.getBoundingClientRect).toHaveBeenCalledTimes(1);
+		expect(near.getBoundingClientRect).not.toHaveBeenCalled();
+		expect(active.getBoundingClientRect).not.toHaveBeenCalled();
+
+		near.remove();
+	});
+
+	it('should deactivate an active element pushed below the line at rest', () => {
+		const onDeactivate = vi.fn();
+		observer.instances.get(active).options.onDeactivate = onDeactivate;
+
+		// Content above grows by 800px and pushes the element out of the
+		// band, below the line.
+		place(active, 1100, 1400);
+		report(active, false);
+		observer.tick();
+
+		expect(observer.instances.get(active).state).toBe('inactive');
+		expect(active.classList.contains('is-active')).toBe(false);
+		expect(active.style.getPropertyValue('--scroll-offset')).toBe('0');
+		expect(onDeactivate).toHaveBeenCalledTimes(1);
+		expect(onScroll).not.toHaveBeenCalled();
+	});
+
+	it('should deactivate an active element pulled above the line at rest', () => {
+		const onDeactivate = vi.fn();
+		observer.instances.get(active).options.onDeactivate = onDeactivate;
+
+		// Content above shrinks by 800px and pulls the element out of the
+		// band, above the line.
+		place(active, -500, -200);
+		report(active, false);
+		observer.tick();
+
+		expect(observer.instances.get(active).state).toBe('passed');
+		expect(active.classList.contains('is-active')).toBe(false);
+		expect(active.style.getPropertyValue('--scroll-offset')).toBe('0');
+		expect(onDeactivate).toHaveBeenCalledTimes(1);
+	});
+
+	it('should forget a report when the loop stops', () => {
+		const lone = new LineObserver({ triggerLine: '50vh' });
+		const late = document.createElement('div');
+		const lateScroll = vi.fn();
+		document.body.append(late);
+
+		// `other` comes near and leaves again before a tick runs, so the
+		// loop stops with its report unread.
+		place(other, 1300, 1600);
+		lone.register(other);
+		lone.handleIntersection([{ isIntersecting: true }], lone.instances.get(other));
+		lone.handleIntersection([{ isIntersecting: false }], lone.instances.get(other));
+		lone.tick();
+		expect(lone.isActive()).toBe(false);
+
+		// An element registered across the line starts the loop again.
+		place(late, 400, 700);
+		lone.register(late, { onScroll: lateScroll });
+		late.getBoundingClientRect.mockClear();
+		lone.tick();
+
+		expect(late.getBoundingClientRect).not.toHaveBeenCalled();
+		expect(lateScroll).not.toHaveBeenCalled();
+
+		late.remove();
+		lone.destroy();
+	});
+
+	it('should forget the report of an unregistered element', () => {
+		place(other, 1300, 1600);
+		observer.register(other);
+		place(other, 550, 850);
+		report(other, true);
+		observer.unregister(other);
+		observer.tick();
+
+		expect(active.getBoundingClientRect).not.toHaveBeenCalled();
+		expect(onScroll).not.toHaveBeenCalled();
+	});
+
+	it('should forget every report on destroy', () => {
+		place(other, 1300, 1600);
+		observer.register(other);
+		report(other, true);
+		observer.destroy();
+
+		expect(observer.reportedInstances.size).toBe(0);
+	});
+});
