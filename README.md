@@ -96,7 +96,7 @@ A theme built with `@wordpress/scripts` can import the package instead and enque
 ```js
 const observer = new LineObserver({
   triggerLine: '50vh',
-  cssCustomProperty: false, // Callbacks only, so skip --scroll-offset.
+  cssCustomProperty: false, // Callbacks only, so skip the custom properties.
 });
 
 document.querySelectorAll('.observed').forEach((el) => {
@@ -200,7 +200,7 @@ observer.getTotalCount(); // 10
 
 ### isActive()
 
-Returns `true` while this observer takes part in the shared RAF loop. The loop stops two frames after the page comes to rest, even with elements active, and starts again on the next scroll, or when an IntersectionObserver reports an element. Returns `false` after `destroy()`.
+Returns `true` while this observer takes part in the shared RAF loop. The loop stops two frames after the page comes to rest, even with elements active, and starts again on the next scroll while an element is near the line or active, or when an IntersectionObserver reports an element. Returns `false` after `destroy()`.
 
 ```js
 observer.isActive(); // true
@@ -404,7 +404,7 @@ Style a child of the observed element with it:
 
 ### What the properties cost
 
-`--scroll-offset` and `--scroll-progress` inherit, and change on each active element in every frame it moves, so the browser restyles everything inside an observed element, whether or not CSS reads them. In Chromium 156, scrolling through 10 elements with 200 descendants each took 55ms of style recalculation, and none with `cssCustomProperty: false`. Observe elements with few descendants, or turn the properties off and use `onScroll`:
+`--scroll-offset` and `--scroll-progress` inherit, and change on each active element in every frame it moves, so the browser restyles everything inside an observed element, whether or not CSS reads them. In Chromium 156, scrolling through 10 elements with 200 descendants each took 49ms of style recalculation, and none with `cssCustomProperty: false`. Observe elements with few descendants, or turn the properties off and use `onScroll`:
 
 ```js
 observer.register(el, {

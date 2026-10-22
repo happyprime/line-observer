@@ -37,7 +37,7 @@
 	<div class="trigger-line"></div>
 
 	<aside class="panel">
-		<p><a href="index.html">All demos</a>. The README's classic script tag, and its child animation. The child fades in and moves up 60px over the first 200px past the line. The section around it does not move, so it activates once and deactivates once each way.</p>
+		<p><a href="index.html">All demos</a>. The README's classic script tag, and its child animation. The child fades in and moves up 60px over the first 200px past the line. The section around it does not move, so it activates once and deactivates once each way. Past the line, the child holds its end state.</p>
 		<nav>
 			<button type="button" id="run-check">Run check</button>
 		</nav>
@@ -73,7 +73,7 @@
 			document.getElementById('deactivations').textContent = counts.deactivate;
 		};
 
-		observer.register(section, {
+		const callbacks = {
 			onActivate: () => {
 				counts.activate++;
 				show();
@@ -82,7 +82,22 @@
 				counts.deactivate++;
 				show();
 			},
-		});
+		};
+
+		observer.register(section, callbacks);
+
+		// Returns the section's state and the child's computed style.
+		const endState = () => {
+			const style = getComputedStyle(inner);
+			return {
+				passed: section.classList.contains('is-passed'),
+				offset: offsetOf(section),
+				opacity: Number(style.opacity),
+				transform: style.transform,
+			};
+		};
+
+		const held = { passed: true, offset: 600, opacity: 1, transform: 'matrix(1, 0, 0, 1, 0, -60)' };
 
 		// Scrolls in 10px steps and returns the transitions and the lowest opacity seen.
 		const steps = async (from, to) => {
@@ -141,6 +156,27 @@
 						lineInto(section, section.offsetHeight + 100)
 					),
 				}),
+			},
+			{
+				name: 'Past the section, the child holds its end state',
+				run: async () => {
+					await jump(lineInto(section, section.offsetHeight + 100));
+					return { expected: held, actual: endState() };
+				},
+			},
+			{
+				name: 'Registered with the section past the line, the child shows its end state',
+				run: async () => {
+					observer.unregister(section);
+					counts.activate = 0;
+					counts.deactivate = 0;
+					observer.register(section, callbacks);
+					await waitFrames();
+					return {
+						expected: { activate: 1, deactivate: 1, ...held },
+						actual: { activate: counts.activate, deactivate: counts.deactivate, ...endState() },
+					};
+				},
 			},
 			{
 				name: '10px steps up through the section: one activation, one deactivation',
