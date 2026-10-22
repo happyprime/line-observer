@@ -45,12 +45,12 @@
   "devDependencies": {
     "@happyprime/eslint-config": "^1.0.0",
     "@rollup/plugin-node-resolve": "^16.0.3",
-    "@rollup/plugin-terser": "^1.0.0",
-    "@vitest/coverage-v8": "^4.0.18",
-    "jsdom": "^28.1.0",
-    "rollup": "^4.59.0",
-    "terser": "^5.46.0",
-    "vitest": "^4.0.18"
+    "@rollup/plugin-terser": "^1.0.2",
+    "@vitest/coverage-v8": "^5.0.5",
+    "jsdom": "^30.1.3",
+    "rollup": "^4.64.12",
+    "terser": "^5.51.2",
+    "vitest": "^5.0.5"
   },
   "bugs": {
     "url": "https://github.com/happyprime/line-observer/issues"
