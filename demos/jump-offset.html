@@ -87,16 +87,16 @@
 			active: box.classList.contains('is-active'),
 			offset: offsetOf(box),
 			onScroll: lastOnScroll[box.id],
-			activationScrollY: Math.round(observer.instances.get(box).activationScrollY),
+			instanceOffset: Math.round(observer.instances.get(box).offset),
 		});
 
-		// The line `depth` pixels into the box. activationScrollY is the
-		// scroll position at which the box's top edge meets the line.
+		// The line `depth` pixels into the box. The instance's offset is the
+		// distance from the box's top edge to the line, measured now.
 		const expected = (box, depth) => ({
 			active: true,
 			offset: depth,
 			onScroll: depth,
-			activationScrollY: Math.round(rectOf(box).top + window.scrollY - triggerLine()),
+			instanceOffset: Math.round(triggerLine() - rectOf(box).top),
 		});
 
 		const steps = async (count, size) => {

@@ -6,7 +6,7 @@ A performant scroll interaction observer that triggers handlers when elements cr
 - Batched DOM read/write operations via IntersectionObserver + RAF
 - Configurable trigger line per instance (px, %, vh, vw)
 - Bidirectional scroll support with consistent offset values
-- Sets a `--scroll-offset` CSS custom property on active elements by default
+- Sets `--scroll-offset` and `--scroll-progress` CSS custom properties on observed elements by default
 
 ## Installation
 
@@ -59,10 +59,10 @@ const observer = new LineObserver({
   activeClass: 'is-active',  // Class added when element is active (default: 'is-active')
   activateFrom: 'both',      // Where activation triggers from: 'both', 'below', 'above' (default: 'both')
   nearMargin: 100,           // IO detection band half-width in px (default: 100)
-  cssCustomProperty: true,   // Set --scroll-offset on active elements (default: true)
+  cssCustomProperty: true,   // Set --scroll-offset and --scroll-progress (default: true)
   onActivate: null,          // Callback when element becomes active (default: null)
   onDeactivate: null,        // Callback when element becomes inactive (default: null)
-  onScroll: null,            // Callback each frame while element is active (default: null)
+  onScroll: null,            // Callback when an active element's offset changes (default: null)
 });
 ```
 
@@ -72,10 +72,10 @@ const observer = new LineObserver({
 | `activeClass` | `string` | `'is-active'` | CSS class added to the element while it is in the active zone. |
 | `activateFrom` | `string` | `'both'` | Which side the element crosses the trigger line from to activate: `'below'` (scrolling down), `'above'` (scrolling up), or `'both'`. |
 | `nearMargin` | `number` | `100` | Half-width (in px) of the IntersectionObserver detection band around the trigger line. Larger values detect elements earlier but keep the animation loop running longer. A safety net in the loop handles elements that skip the band during very fast scrolling. |
-| `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` on active elements every frame. Set to false if you only use callbacks. |
+| `cssCustomProperty` | `boolean` | `true` | When true, sets `--scroll-offset` and `--scroll-progress` on each element when its values change. Set to false if you only use callbacks. |
 | `onActivate` | `function \| null` | `null` | Called when an element crosses the trigger line and becomes active. Receives `(element, instance)`. |
 | `onDeactivate` | `function \| null` | `null` | Called when an element leaves the active zone. Receives `(element, instance)`. |
-| `onScroll` | `function \| null` | `null` | Called every animation frame while the element is active. Receives `(offset, element, instance)`. |
+| `onScroll` | `function \| null` | `null` | Called when the element activates, in each frame in which an active element's offset or progress changes, and once more with the value it holds when it leaves the active zone, before `onDeactivate`. Receives `(offset, element, instance)`. |
 
 ## Methods
 
@@ -92,7 +92,7 @@ observer
 
 ### unregister(element)
 
-Stop observing an element. Removes the active class and cleans up the `--scroll-offset` property. Returns the instance for chaining.
+Stop observing an element. Removes the active class, `--scroll-offset` and `--scroll-progress`. Returns the instance for chaining.
 
 ```js
 observer.unregister(el1);
@@ -147,16 +147,16 @@ The `instance` object passed to `onActivate`, `onDeactivate`, and `onScroll` cal
 | `element` | `HTMLElement` | The observed DOM element. |
 | `options` | `object` | Merged options (constructor defaults + per-element overrides). |
 | `state` | `string` | Current state: `'inactive'`, `'active'`, or `'passed'`. |
-| `activationScrollY` | `number` | The `window.scrollY` value at which the element's top edge meets the trigger line, measured when the element activates. After a jump, this can be well before the position the element activated at. |
-| `elementHeight` | `number` | The element's `offsetHeight`, captured at activation. |
+| `offset` | `number` | The distance in pixels from the element's top edge to the trigger line, from `0` to `elementHeight`. Past the line it holds `elementHeight`, and below it `0`. |
+| `progress` | `number` | `offset / elementHeight`, from `0` to `1`. Past the line it holds `1`, and below it `0`. |
+| `elementHeight` | `number` | The element's height, read from the same `getBoundingClientRect()` as `offset`. |
 | `triggerLinePx` | `number` | The trigger line position in pixels (computed from the `triggerLine` option). |
 
 ```js
 observer.register(el, {
   onScroll: (offset, element, instance) => {
-    // offset = scrollY - activationScrollY (clamped to >= 0)
-    const progress = offset / instance.elementHeight;
-    element.style.setProperty('--progress', Math.min(1, progress));
+    // instance.progress is offset / instance.elementHeight.
+    element.querySelector('.meter').value = instance.progress;
   },
   onActivate: (element, instance) => {
     console.log('State:', instance.state);             // 'active'
@@ -232,7 +232,9 @@ Known limit: with `'below'` or `'above'`, a layout change at rest, such as conte
 
 ## The --scroll-offset CSS custom property
 
-When `cssCustomProperty` is `true` (the default), LineObserver sets `--scroll-offset` on each active element every animation frame. The value is the distance in pixels from the element's top edge to the trigger line, so an element that activates after a jump starts at the distance already crossed, not at 0.
+When `cssCustomProperty` is `true` (the default), LineObserver sets `--scroll-offset` on each element when it activates, and in each frame in which it moves while active. The value is the distance in pixels from the element's top edge to the trigger line, so an element that activates after a jump starts at the distance already crossed, not at 0.
+
+The offset comes from the element's position, not from `window.scrollY`. Scroll anchoring that moves the page when content above it changes, or a scroll lock that sets `scrollY` to `0`, leaves it alone.
 
 ```css
 .observed {
@@ -244,7 +246,29 @@ When `cssCustomProperty` is `true` (the default), LineObserver sets `--scroll-of
 }
 ```
 
-The property is reset to `0` when the element deactivates and removed entirely when the element is unregistered or the observer is destroyed.
+When the element leaves the active zone, the property holds the value it left with: the element's height once its bottom edge passes the line, or `0` once its top edge drops back below it. It is removed when the element is unregistered or the observer is destroyed.
+
+### --scroll-progress
+
+LineObserver also sets `--scroll-progress`: `0` when the line meets the element's top edge, `1` when it meets the bottom edge. It is `--scroll-offset` divided by the element's height, and the height is read with the offset, so it stays right when the element grows. Like the offset, it holds `1` past the line and `0` below it.
+
+Style a child of the observed element with it:
+
+```html
+<section class="observed">
+  <div class="observed__bar"></div>
+</section>
+```
+
+```css
+/* Fills from left to right as the line crosses the section. */
+.observed__bar {
+  height: 4px;
+  background: currentColor;
+  transform: scaleX(var(--scroll-progress, 0));
+  transform-origin: left;
+}
+```
 
 To disable this behavior, set `cssCustomProperty` to `false`:
 

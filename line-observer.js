@@ -10,7 +10,7 @@
  * - Configurable trigger line per instance (px, %, vh, vw)
  * - Configurable scroll direction behavior
  * - Bidirectional scroll support with consistent offset values
- * - Default handler exposes --scroll-offset CSS custom property
+ * - Default handler exposes --scroll-offset and --scroll-progress CSS custom properties
  * - Support for custom scroll handlers
  *
  * @example
@@ -21,8 +21,7 @@
  *   onActivate: (el) => console.log('Activated!'),
  *   onDeactivate: (el) => console.log('Deactivated!'),
  *   onScroll: (offset, el, instance) => {
- *     const progress = offset / instance.elementHeight;
- *     // Do something with progress...
+ *     // instance.progress runs from 0 at the top edge to 1 at the bottom.
  *   }
  * });
  *
@@ -46,10 +45,11 @@ class LineObserver {
 	 *                                                    or 'both' (default)
 	 * @param {number}        [options.nearMargin]        - IO band half-width in px (default: 100). Larger values
 	 *                                                    detect elements earlier; smaller values are more efficient.
-	 * @param {boolean}       [options.cssCustomProperty] - Set --scroll-offset on active elements (default: true)
+	 * @param {boolean}       [options.cssCustomProperty] - Set --scroll-offset and --scroll-progress (default: true)
 	 * @param {Function}      [options.onActivate]        - Callback when element becomes active
 	 * @param {Function}      [options.onDeactivate]      - Callback when element becomes inactive
-	 * @param {Function}      [options.onScroll]          - Callback on each scroll frame while active
+	 * @param {Function}      [options.onScroll]          - Callback when an active element's offset changes, and
+	 *                                                    once with the value it holds when it leaves
 	 */
 	constructor(options = {}) {
 		this.defaults = {
@@ -243,22 +243,32 @@ class LineObserver {
 	}
 
 	/**
-	 * Records the element's height and the scroll position at which its top
-	 * edge meets the trigger line.
+	 * Sets the element's height, offset and progress from its rect.
 	 *
-	 * The offset is `scrollY - activationScrollY`: the distance from the
-	 * element's top edge to the trigger line. After a jump, the element can be
-	 * far across the line when it activates, so the offset does not start at 0.
+	 * The offset is the distance from the element's top edge to the trigger
+	 * line, from 0 to the element's height. It comes from the rect, not from
+	 * `scrollY`, so it stays right when the page scrolls without the element
+	 * moving, as with scroll anchoring or a scroll lock, and when the element
+	 * moves without the page scrolling. The height comes from the same rect,
+	 * so progress reaches 1 when the bottom edge meets the line.
 	 *
-	 * @param {Object}  instance - The observer instance about to activate.
-	 * @param {DOMRect} rect     - The element's rect, read at `scrollY`.
-	 * @param {number}  scrollY  - The scroll position when `rect` was read.
+	 * @param {Object}  instance - The observer instance.
+	 * @param {DOMRect} rect     - The element's rect.
+	 * @return {boolean} True if the offset or progress changed.
 	 * @private
 	 */
-	_measure(instance, rect, scrollY) {
-		instance.elementHeight = instance.element.offsetHeight;
-		instance.activationScrollY =
-			scrollY - (instance.triggerLinePx - rect.top);
+	_measure(instance, rect) {
+		const { offset, progress } = instance;
+		const height = rect.bottom - rect.top;
+
+		instance.elementHeight = height;
+		instance.offset = Math.min(
+			height,
+			Math.max(0, instance.triggerLinePx - rect.top)
+		);
+		instance.progress = height > 0 ? instance.offset / height : 0;
+
+		return instance.offset !== offset || instance.progress !== progress;
 	}
 
 	/**
@@ -305,8 +315,11 @@ class LineObserver {
 	/**
 	 * Transition instance to new state
 	 *
-	 * An instance that moves to 'active' must be measured with `_measure()`
-	 * first.
+	 * An instance that leaves 'active' holds the value it left with: its
+	 * height and progress 1 past the line, or 0 below it. `onScroll` gets
+	 * that value before `onDeactivate` runs. An instance that moves to
+	 * 'active' gets its values from `_apply()`, after every transition in
+	 * the pass.
 	 *
 	 * @param {Object} instance - The observer instance to transition.
 	 * @param {string} newState - The new state ('inactive', 'active', or 'passed').
@@ -335,12 +348,13 @@ class LineObserver {
 			element.classList.remove(options.activeClass);
 			this.activeInstances.delete(instance);
 
-			// Reset scroll offset
-			if (options.cssCustomProperty) {
-				element.style.setProperty('--scroll-offset', 0);
-			}
+			const passed = newState === 'passed';
+			instance.offset = passed ? instance.elementHeight : 0;
+			instance.progress = passed ? 1 : 0;
+			this._writeValues(instance);
 
-			if (options.onDeactivate) {
+			// onScroll can unregister the element.
+			if (options.onDeactivate && this._isRegistered(instance)) {
 				this._call(options.onDeactivate, element, instance);
 			}
 		}
@@ -383,7 +397,8 @@ class LineObserver {
 			element,
 			options: mergedOptions,
 			state: 'inactive',
-			activationScrollY: 0,
+			offset: 0,
+			progress: 0,
 			elementHeight: 0,
 			triggerLinePx: this.parseTriggerLine(mergedOptions.triggerLine),
 			observer: null,
@@ -404,23 +419,22 @@ class LineObserver {
 	 *
 	 * Called once at registration time. If the element already spans the
 	 * trigger line, it activates immediately regardless of `activateFrom`
-	 * (there is no scroll direction at registration time). Elements fully
-	 * above the trigger line are marked as 'passed'.
+	 * (there is no scroll direction at registration time), and gets its
+	 * values and `onScroll`. Elements fully above the trigger line are marked
+	 * as 'passed'.
+	 *
+	 * This reads the element and then writes to it. Registering many
+	 * elements that are already across the line can make the browser lay out
+	 * the page once for each of them.
 	 *
 	 * @param {Object} instance - The observer instance to check.
 	 * @private
 	 */
 	checkInitialState(instance) {
-		const rect = instance.element.getBoundingClientRect();
-		const scrollY = window.scrollY;
+		const change = this._read(instance, false);
 
-		const initialState = this._determineState(rect, instance.triggerLinePx);
-
-		if (initialState === 'active') {
-			this._measure(instance, rect, scrollY);
-			this.transitionState(instance, 'active');
-		} else if (initialState === 'passed') {
-			instance.state = 'passed';
+		if (change) {
+			this._apply([change]);
 		}
 	}
 
@@ -446,10 +460,11 @@ class LineObserver {
 		this.nearInstances.delete(instance);
 		this.reportedInstances.delete(instance);
 
-		// Remove class and custom property
+		// Remove class and custom properties
 		element.classList.remove(instance.options.activeClass);
 		if (instance.options.cssCustomProperty) {
 			element.style.removeProperty('--scroll-offset');
+			element.style.removeProperty('--scroll-progress');
 		}
 
 		this.instances.delete(element);
@@ -524,68 +539,91 @@ class LineObserver {
 	}
 
 	/**
-	 * Returns the state an element moves to, or null if it stays where it is.
+	 * Reads an element and returns the change a pass must apply to it, or null.
 	 *
-	 * Reads the element's rect, and its height if it activates. It writes
-	 * nothing to the DOM.
+	 * Reads the element's rect, and measures it if it is active or becomes
+	 * active. It writes nothing to the DOM.
 	 *
-	 * @param {Object} instance - The observer instance to check.
-	 * @param {number} scrollY  - The current scroll Y position.
-	 * @return {string|null}      The new state, or null.
+	 * @param {Object}  instance - The observer instance to read.
+	 * @param {boolean} filter   - Whether `activateFrom` applies. It does not
+	 *                           at registration or after a resize.
+	 * @return {Object|null} `{ instance, from, to, changed }`, or null.
 	 * @private
 	 */
-	_readState(instance, scrollY) {
-		if (!instance.element.isConnected) {
-			return instance.state === 'inactive' ? null : 'inactive';
+	_read(instance, filter) {
+		const from = instance.state;
+		let to = 'inactive';
+		let changed = false;
+
+		if (instance.element.isConnected) {
+			const rect = instance.element.getBoundingClientRect();
+			to = this._determineState(rect, instance.triggerLinePx);
+
+			if (
+				filter &&
+				to !== from &&
+				this._shouldSuppressTransition(
+					instance.options.activateFrom,
+					this.currentDirection,
+					from,
+					to
+				)
+			) {
+				to = from;
+			}
+
+			// An element that leaves 'active' is measured too, so the height
+			// it holds past the line is current.
+			if (to === 'active' || from === 'active') {
+				changed = this._measure(instance, rect);
+			}
 		}
 
-		const rect = instance.element.getBoundingClientRect();
-		const newState = this._determineState(rect, instance.triggerLinePx);
-
-		if (
-			newState === instance.state ||
-			this._shouldSuppressTransition(
-				instance.options.activateFrom,
-				this.currentDirection,
-				instance.state,
-				newState
-			)
-		) {
+		if (to === from && !changed) {
 			return null;
 		}
 
-		if (newState === 'active') {
-			this._measure(instance, rect, scrollY);
-		}
-
-		return newState;
+		return { instance, from, to, changed };
 	}
 
 	/**
-	 * Writes the element's offset to `--scroll-offset` and passes it to `onScroll`.
+	 * Applies state changes, then writes values for each active element that moved or activated.
 	 *
-	 * @param {Object} instance - An active observer instance.
-	 * @param {number} scrollY  - The current scroll Y position.
+	 * @param {Object[]} changes - Results of `_read()`.
 	 * @private
 	 */
-	_writeOffset(instance, scrollY) {
+	_apply(changes) {
+		for (const { instance, to } of changes) {
+			this.transitionState(instance, to);
+		}
+
+		for (const { instance, from, changed } of changes) {
+			if (instance.state === 'active' && (changed || from !== 'active')) {
+				this._writeValues(instance);
+			}
+		}
+	}
+
+	/**
+	 * Writes the element's offset and progress to its custom properties and `onScroll`.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @private
+	 */
+	_writeValues(instance) {
 		if (!this._isRegistered(instance)) {
 			return;
 		}
 
-		const offset = Math.max(0, scrollY - instance.activationScrollY);
+		const { element, options, offset, progress } = instance;
 
-		if (instance.options.cssCustomProperty) {
-			instance.element.style.setProperty('--scroll-offset', offset);
+		if (options.cssCustomProperty) {
+			element.style.setProperty('--scroll-offset', offset);
+			element.style.setProperty('--scroll-progress', progress);
 		}
 
-		if (instance.options.onScroll) {
-			this._call(
-				instance.options.onScroll,
-				offset,
-				instance.element,
-				instance
-			);
+		if (options.onScroll) {
+			this._call(options.onScroll, offset, element, instance);
 		}
 	}
 
@@ -633,11 +671,11 @@ class LineObserver {
 		this.trackDirection();
 
 		// === READ PHASE ===
-		const transitions = [];
+		const changes = [];
 		const read = (instance) => {
-			const newState = this._readState(instance, scrollY);
-			if (newState) {
-				transitions.push({ instance, newState });
+			const change = this._read(instance, true);
+			if (change) {
+				changes.push(change);
 			}
 		};
 
@@ -659,23 +697,7 @@ class LineObserver {
 		this.reportedInstances.clear();
 
 		// === WRITE PHASE ===
-		for (const { instance, newState } of transitions) {
-			this.transitionState(instance, newState);
-		}
-
-		// At rest, an element that was already active keeps the offset it
-		// has, so only elements that activated in this pass get one.
-		if (moved) {
-			for (const instance of this.activeInstances) {
-				this._writeOffset(instance, scrollY);
-			}
-		} else {
-			for (const { instance, newState } of transitions) {
-				if (newState === 'active') {
-					this._writeOffset(instance, scrollY);
-				}
-			}
-		}
+		this._apply(changes);
 
 		// Update tracking
 		this.lastScrollY = scrollY;
@@ -744,10 +766,11 @@ class LineObserver {
 			this.viewportHeight = window.innerHeight;
 			this.viewportWidth = window.innerWidth;
 
-			const scrollY = window.scrollY;
-			const transitions = [];
+			const changes = [];
 
-			// Recalculate trigger line, recreate observers, and re-check states
+			// Recalculate trigger line, recreate observers, and re-check
+			// states. The line can move, so an element that stays active
+			// gets fresh values too.
 			for (const instance of this.instances.values()) {
 				if (!instance.element.isConnected) {
 					continue;
@@ -760,23 +783,13 @@ class LineObserver {
 				);
 				instance.observer = this.createObserver(instance);
 
-				// Re-evaluate state in case trigger line moved across element
-				const rect = instance.element.getBoundingClientRect();
-				const newState = this._determineState(
-					rect,
-					instance.triggerLinePx
-				);
-				if (newState !== instance.state) {
-					if (newState === 'active') {
-						this._measure(instance, rect, scrollY);
-					}
-					transitions.push({ instance, newState });
+				const change = this._read(instance, false);
+				if (change) {
+					changes.push(change);
 				}
 			}
 
-			for (const { instance, newState } of transitions) {
-				this.transitionState(instance, newState);
-			}
+			this._apply(changes);
 		}, 150);
 	}
 
@@ -842,6 +855,7 @@ class LineObserver {
 			instance.element.classList.remove(instance.options.activeClass);
 			if (instance.options.cssCustomProperty) {
 				instance.element.style.removeProperty('--scroll-offset');
+				instance.element.style.removeProperty('--scroll-progress');
 			}
 		}
 

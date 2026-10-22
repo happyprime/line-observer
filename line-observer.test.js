@@ -1527,10 +1527,7 @@ describe('tick() offset and onScroll', () => {
 		const instance = observer.instances.get(element);
 
 		// Element starts active (checkInitialState activates it).
-		// Set activationScrollY explicitly for predictable offset math.
-		instance.activationScrollY = 100;
-
-		// Simulate scrolling to position 250
+		// Simulate scrolling 150px down.
 		observer.lastScrollY = 100;
 		Object.defineProperty(window, 'scrollY', {
 			value: 250,
@@ -1544,8 +1541,8 @@ describe('tick() offset and onScroll', () => {
 
 		observer.tick();
 
-		// offset = scrollY(250) - activationScrollY(100) = 150
-		expect(onScroll).toHaveBeenCalledWith(150, element, instance);
+		// offset = triggerLine(500) - top(250) = 250
+		expect(onScroll).toHaveBeenLastCalledWith(250, element, instance);
 	});
 
 	it('should set --scroll-offset CSS custom property during tick', () => {
@@ -1555,11 +1552,6 @@ describe('tick() offset and onScroll', () => {
 		});
 
 		observer.register(element);
-		const instance = observer.instances.get(element);
-
-		// Element starts active (checkInitialState activates it).
-		// Set activationScrollY explicitly for predictable offset math.
-		instance.activationScrollY = 100;
 
 		observer.lastScrollY = 100;
 		Object.defineProperty(window, 'scrollY', {
@@ -1574,7 +1566,7 @@ describe('tick() offset and onScroll', () => {
 
 		observer.tick();
 
-		expect(element.style.getPropertyValue('--scroll-offset')).toBe('150');
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('250');
 	});
 
 	it('should skip work when scroll position unchanged', () => {
@@ -1589,6 +1581,7 @@ describe('tick() offset and onScroll', () => {
 		const instance = observer.instances.get(element);
 
 		observer.transitionState(instance, 'active', 100);
+		onScroll.mockClear();
 
 		// Set scrollY to match lastScrollY
 		observer.lastScrollY = 100;
@@ -2063,7 +2056,7 @@ describe('transitionState edge cases', () => {
 });
 
 describe('offset clamping', () => {
-	it('should clamp offset to 0 when scrollY is less than activationScrollY', () => {
+	it('should clamp offset to 0 when an element held active is below the line', () => {
 		const observer = new LineObserver({ triggerLine: '50vh' });
 		const onScroll = vi.fn();
 		const element = document.createElement('div');
@@ -2073,35 +2066,58 @@ describe('offset clamping', () => {
 			top: 400,
 			bottom: 700,
 		});
-		Object.defineProperty(element, 'offsetHeight', {
-			value: 300,
-			configurable: true,
-		});
 
-		observer.register(element, { onScroll });
+		observer.register(element, { activateFrom: 'below', onScroll });
 		const instance = observer.instances.get(element);
 
-		// Element starts active (checkInitialState activates it).
-		// Set activationScrollY explicitly to test clamping.
-		instance.activationScrollY = 200;
-		observer.nearInstances.delete(instance);
-
-		// Scroll to position BELOW activationScrollY
+		// Scrolling up drops the element below the line. 'below' keeps it
+		// active.
+		scrollWindowTo(200);
 		observer.lastScrollY = 200;
-		Object.defineProperty(window, 'scrollY', {
-			value: 100,
-			configurable: true,
-		});
+		scrollWindowTo(100);
 
 		element.getBoundingClientRect = vi.fn().mockReturnValue({
-			top: 500,
-			bottom: 800,
+			top: 520,
+			bottom: 820,
 		});
 
 		observer.tick();
 
-		// offset = Math.max(0, 100 - 200) = 0
-		expect(onScroll).toHaveBeenCalledWith(0, element, instance);
+		expect(instance.state).toBe('active');
+		expect(onScroll).toHaveBeenLastCalledWith(0, element, instance);
+		expect(instance.progress).toBe(0);
+
+		document.body.removeChild(element);
+		observer.destroy();
+	});
+
+	it('should clamp offset to the height when an element held active is past the line', () => {
+		const observer = new LineObserver({ triggerLine: '50vh' });
+		const onScroll = vi.fn();
+		const element = document.createElement('div');
+		document.body.appendChild(element);
+
+		element.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: 400,
+			bottom: 700,
+		});
+
+		observer.register(element, { activateFrom: 'above', onScroll });
+		const instance = observer.instances.get(element);
+
+		// Scrolling down takes the element past the line. 'above' keeps it
+		// active.
+		scrollWindowTo(500);
+		element.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: -100,
+			bottom: 200,
+		});
+
+		observer.tick();
+
+		expect(instance.state).toBe('active');
+		expect(onScroll).toHaveBeenLastCalledWith(300, element, instance);
+		expect(instance.progress).toBe(1);
 
 		document.body.removeChild(element);
 		observer.destroy();
@@ -2147,15 +2163,13 @@ describe('resize debounce behavior', () => {
 	});
 });
 
-describe('activationScrollY precision', () => {
-	it('should set precise activationScrollY in checkInitialState', () => {
+describe('offset precision', () => {
+	it('should measure the offset from the rect in checkInitialState', () => {
 		const observer = new LineObserver({ triggerLine: '50vh' }); // 500px
 		const element = document.createElement('div');
 		document.body.appendChild(element);
 
-		// Element at scroll position 300, top=200 means trigger line (500)
-		// is 300px into the element: distanceIntoElement = 500 - 200 = 300
-		// activationScrollY = 300 - 300 = 0
+		// top=200 puts the trigger line (500) 300px into the element.
 		Object.defineProperty(window, 'scrollY', {
 			value: 300,
 			configurable: true,
@@ -2170,13 +2184,13 @@ describe('activationScrollY precision', () => {
 		const instance = observer.instances.get(element);
 
 		expect(instance.state).toBe('active');
-		expect(instance.activationScrollY).toBe(0); // 300 - (500 - 200)
+		expect(instance.offset).toBe(300);
 
 		document.body.removeChild(element);
 		observer.destroy();
 	});
 
-	it('should measure activationScrollY from the rect when activating while scrolling down', () => {
+	it('should measure the offset from the rect when activating while scrolling down', () => {
 		const observer = new LineObserver({ triggerLine: '50vh' }); // 500px
 		const element = document.createElement('div');
 		document.body.appendChild(element);
@@ -2208,15 +2222,14 @@ describe('activationScrollY precision', () => {
 		observer.tick();
 
 		expect(instance.state).toBe('active');
-		// 200 - (500 - 480)
-		expect(instance.activationScrollY).toBe(180);
+		expect(instance.offset).toBe(20);
 		expect(element.style.getPropertyValue('--scroll-offset')).toBe('20');
 
 		document.body.removeChild(element);
 		observer.destroy();
 	});
 
-	it('should measure activationScrollY from the rect when activating while scrolling up', () => {
+	it('should measure the offset from the rect when activating while scrolling up', () => {
 		const observer = new LineObserver({ triggerLine: '50vh' }); // 500px
 		const element = document.createElement('div');
 		document.body.appendChild(element);
@@ -2249,15 +2262,14 @@ describe('activationScrollY precision', () => {
 		observer.tick();
 
 		expect(instance.state).toBe('active');
-		// 500 - (500 - 250)
-		expect(instance.activationScrollY).toBe(250);
+		expect(instance.offset).toBe(250);
 		expect(element.style.getPropertyValue('--scroll-offset')).toBe('250');
 
 		document.body.removeChild(element);
 		observer.destroy();
 	});
 
-	it('should set precise activationScrollY on resize', () => {
+	it('should measure the offset from the rect on resize', () => {
 		vi.useFakeTimers();
 		const observer = new LineObserver({ triggerLine: '50vh' }); // 500px
 		const element = document.createElement('div');
@@ -2287,9 +2299,8 @@ describe('activationScrollY precision', () => {
 		vi.advanceTimersByTime(200);
 
 		expect(instance.state).toBe('active');
-		// distanceIntoElement = 500 - 300 = 200
-		// activationScrollY = 100 - 200 = -100
-		expect(instance.activationScrollY).toBe(-100);
+		expect(instance.offset).toBe(200);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('200');
 
 		document.body.removeChild(element);
 		observer.destroy();
@@ -2424,6 +2435,7 @@ describe('multiple elements in a single tick', () => {
 		const inst = observer.instances.get(el);
 		// Element is active (from checkInitialState) and in nearInstances
 		observer.nearInstances.add(inst);
+		onScroll.mockClear();
 
 		// Scroll — element moves to passed
 		observer.lastScrollY = 0;
@@ -2441,8 +2453,10 @@ describe('multiple elements in a single tick', () => {
 
 		// Should have been deactivated in near pass
 		expect(inst.state).toBe('passed');
-		// onScroll should NOT have been called — element was handled in near pass
-		expect(onScroll).not.toHaveBeenCalled();
+		// One onScroll, with the height it holds past the line. The
+		// active-instances pass did not handle it again.
+		expect(onScroll).toHaveBeenCalledTimes(1);
+		expect(onScroll).toHaveBeenCalledWith(300, el, inst);
 
 		document.body.removeChild(el);
 		observer.destroy();
@@ -2462,6 +2476,7 @@ describe('destroy during pending RAF', () => {
 
 		const onScroll = vi.fn();
 		observer.register(element, { onScroll });
+		onScroll.mockClear();
 
 		// Element is active. Start the loop.
 		observer.startLoop();
@@ -2897,7 +2912,7 @@ describe('activation after a jump', () => {
 		observer.tick();
 
 		expect(instance.state).toBe('active');
-		expect(instance.activationScrollY).toBe(50);
+		expect(instance.offset).toBe(350);
 		expect(element.style.getPropertyValue('--scroll-offset')).toBe('350');
 		expect(onScroll).toHaveBeenCalledTimes(1);
 		expect(onScroll).toHaveBeenCalledWith(350, element, instance);
@@ -2921,7 +2936,7 @@ describe('activation after a jump', () => {
 		observer.tick();
 
 		expect(instance.state).toBe('active');
-		expect(instance.activationScrollY).toBe(550);
+		expect(instance.offset).toBe(50);
 		expect(element.style.getPropertyValue('--scroll-offset')).toBe('50');
 		expect(onScroll).toHaveBeenCalledTimes(1);
 		expect(onScroll).toHaveBeenCalledWith(50, element, instance);
@@ -2942,7 +2957,7 @@ describe('activation after a jump', () => {
 		observer.tick();
 
 		expect(instance.state).toBe('active');
-		expect(instance.activationScrollY).toBe(800);
+		expect(instance.offset).toBe(200);
 		expect(element.style.getPropertyValue('--scroll-offset')).toBe('200');
 		expect(onScroll).toHaveBeenCalledWith(200, element, instance);
 	});
@@ -3043,7 +3058,7 @@ describe('read and write order', () => {
 		expect(observer.instances.get(b).state).toBe('active');
 		expect(observer.instances.get(c).state).toBe('active');
 		expect(observer.instances.get(d).state).toBe('passed');
-		expect(log).toContain('read height c');
+		expect(log).toContain('read rect c');
 		expect(log).toContain('write onScroll a');
 		expect(readsAfterFirstWrite()).toEqual([]);
 	});
@@ -3199,7 +3214,8 @@ describe('a pass at rest', () => {
 		expect(active.classList.contains('is-active')).toBe(false);
 		expect(active.style.getPropertyValue('--scroll-offset')).toBe('0');
 		expect(onDeactivate).toHaveBeenCalledTimes(1);
-		expect(onScroll).not.toHaveBeenCalled();
+		expect(onScroll).toHaveBeenCalledTimes(1);
+		expect(onScroll).toHaveBeenCalledWith(0, active, observer.instances.get(active));
 	});
 
 	it('should deactivate an active element pulled above the line at rest', () => {
@@ -3214,7 +3230,7 @@ describe('a pass at rest', () => {
 
 		expect(observer.instances.get(active).state).toBe('passed');
 		expect(active.classList.contains('is-active')).toBe(false);
-		expect(active.style.getPropertyValue('--scroll-offset')).toBe('0');
+		expect(active.style.getPropertyValue('--scroll-offset')).toBe('300');
 		expect(onDeactivate).toHaveBeenCalledTimes(1);
 	});
 
@@ -3237,6 +3253,7 @@ describe('a pass at rest', () => {
 		place(late, 400, 700);
 		lone.register(late, { onScroll: lateScroll });
 		late.getBoundingClientRect.mockClear();
+		lateScroll.mockClear();
 		lone.tick();
 
 		expect(late.getBoundingClientRect).not.toHaveBeenCalled();
@@ -3799,7 +3816,7 @@ describe('the loop at rest', () => {
 
 		expect(stateOf(a)).toBe('passed');
 		expect(a.classList.contains('is-active')).toBe(false);
-		expect(a.style.getPropertyValue('--scroll-offset')).toBe('0');
+		expect(a.style.getPropertyValue('--scroll-offset')).toBe('300');
 		expect(onDeactivate).toHaveBeenCalledTimes(1);
 	});
 
@@ -3885,5 +3902,294 @@ describe('the loop at rest', () => {
 
 		expect(observer.isActive()).toBe(false);
 		expect(pending.size).toBe(0);
+	});
+});
+
+describe('offset and progress from the position', () => {
+	let observer;
+	let element;
+	let onScroll;
+	let log;
+
+	const place = (top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const report = () => {
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(element)
+		);
+	};
+
+	const values = () => ({
+		offset: element.style.getPropertyValue('--scroll-offset'),
+		progress: element.style.getPropertyValue('--scroll-progress'),
+	});
+
+	beforeEach(() => {
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		element = document.createElement('div');
+		document.body.append(element);
+		log = [];
+		onScroll = vi.fn((offset, el, instance) =>
+			log.push(`onScroll ${offset} ${instance.progress}`)
+		);
+	});
+
+	afterEach(() => {
+		element.remove();
+		observer.destroy();
+	});
+
+	describe('the offset', () => {
+		it('should stay put when content inserted above moves the page and not the element', () => {
+			// The line is 340px into a 600px element.
+			scrollWindowTo(1000);
+			place(160, 760);
+			observer.register(element, { onScroll });
+			report();
+			observer.tick();
+			onScroll.mockClear();
+			vi.spyOn(element.style, 'setProperty');
+
+			// 300px of content goes in above. Scroll anchoring adds 300 to
+			// scrollY and leaves the element where it was.
+			scrollWindowTo(1300);
+			observer.tick();
+
+			const instance = observer.instances.get(element);
+			expect(instance.state).toBe('active');
+			expect(instance.offset).toBe(340);
+			expect(values().offset).toBe('340');
+			expect(onScroll).not.toHaveBeenCalled();
+			expect(element.style.setProperty).not.toHaveBeenCalled();
+		});
+
+		it('should stay put when a scroll lock sets scrollY to 0', () => {
+			scrollWindowTo(1000);
+			place(160, 760);
+			observer.register(element, { onScroll });
+			report();
+			observer.tick();
+			onScroll.mockClear();
+
+			// A modal sets `position: fixed` on the body and offsets it, so
+			// scrollY is 0 and nothing on the page moves.
+			scrollWindowTo(0);
+			observer.tick();
+
+			expect(observer.instances.get(element).offset).toBe(340);
+			expect(values().offset).toBe('340');
+			expect(onScroll).not.toHaveBeenCalled();
+		});
+
+		it('should follow the element, not the page, when both move', () => {
+			place(160, 760);
+			observer.register(element, { onScroll });
+			report();
+			observer.tick();
+
+			// The page scrolls 100px down while content above the element
+			// shrinks 50px, so the element moves 150px up.
+			scrollWindowTo(100);
+			place(10, 610);
+			observer.tick();
+
+			expect(observer.instances.get(element).offset).toBe(490);
+			expect(onScroll).toHaveBeenLastCalledWith(
+				490,
+				element,
+				observer.instances.get(element)
+			);
+		});
+	});
+
+	describe('progress', () => {
+		it('should follow the offset across the element, down and up', () => {
+			// 400px tall, just below the line.
+			place(520, 920);
+			observer.register(element, { onScroll });
+			report();
+			observer.tick();
+			const instance = observer.instances.get(element);
+
+			scrollWindowTo(120);
+			place(400, 800);
+			observer.tick();
+			expect(instance.progress).toBe(0.25);
+			expect(values()).toEqual({ offset: '100', progress: '0.25' });
+
+			scrollWindowTo(320);
+			place(200, 600);
+			observer.tick();
+			expect(values()).toEqual({ offset: '300', progress: '0.75' });
+
+			scrollWindowTo(170);
+			place(350, 750);
+			observer.tick();
+			expect(values()).toEqual({ offset: '150', progress: '0.375' });
+
+			expect(log).toEqual([
+				'onScroll 100 0.25',
+				'onScroll 300 0.75',
+				'onScroll 150 0.375',
+			]);
+		});
+
+		it('should read the height every pass, so an element that grows keeps it right', () => {
+			// The line is 300px into a 600px element.
+			place(200, 800);
+			observer.register(element, { onScroll });
+			report();
+			observer.tick();
+			const instance = observer.instances.get(element);
+			expect(instance.progress).toBe(0.5);
+
+			// The element grows to 1000px, then the page scrolls 100px.
+			scrollWindowTo(100);
+			place(100, 1100);
+			observer.tick();
+
+			expect(instance.elementHeight).toBe(1000);
+			expect(instance.offset).toBe(400);
+			expect(instance.progress).toBe(0.4);
+			expect(values()).toEqual({ offset: '400', progress: '0.4' });
+
+			// Progress stays under 1 until the bottom edge reaches the line.
+			scrollWindowTo(699);
+			place(-499, 501);
+			observer.tick();
+			expect(instance.state).toBe('active');
+			expect(instance.progress).toBeLessThan(1);
+		});
+	});
+
+	describe('the value an element holds when it leaves', () => {
+		it('should hold its height and progress 1 when it passes the line', () => {
+			place(200, 800);
+			observer.register(element, { onScroll });
+			report();
+			observer.tick();
+
+			scrollWindowTo(400);
+			place(-200, 400);
+			observer.tick();
+
+			const instance = observer.instances.get(element);
+			expect(instance.state).toBe('passed');
+			expect(instance.offset).toBe(600);
+			expect(instance.progress).toBe(1);
+			expect(values()).toEqual({ offset: '600', progress: '1' });
+		});
+
+		it('should hold 0 when it goes back below the line', () => {
+			place(200, 800);
+			observer.register(element, { onScroll });
+			report();
+			observer.tick();
+
+			scrollWindowTo(400);
+			place(-200, 400);
+			observer.tick();
+
+			// Back up onto the element, then on until it is below the line.
+			scrollWindowTo(0);
+			place(200, 800);
+			observer.tick();
+			expect(values()).toEqual({ offset: '300', progress: '0.5' });
+
+			scrollWindowTo(-400);
+			place(600, 1200);
+			observer.tick();
+
+			const instance = observer.instances.get(element);
+			expect(instance.state).toBe('inactive');
+			expect(instance.offset).toBe(0);
+			expect(instance.progress).toBe(0);
+			expect(values()).toEqual({ offset: '0', progress: '0' });
+		});
+
+		it('should call onScroll with the held value before onDeactivate', () => {
+			const onDeactivate = vi.fn(() => log.push('onDeactivate'));
+
+			place(200, 800);
+			observer.register(element, { onScroll, onDeactivate });
+			report();
+			observer.tick();
+			log = [];
+
+			// Down past the line.
+			scrollWindowTo(400);
+			place(-200, 400);
+			observer.tick();
+			expect(log).toEqual(['onScroll 600 1', 'onDeactivate']);
+
+			// Up onto it, then back below it.
+			scrollWindowTo(100);
+			place(100, 700);
+			observer.tick();
+			log = [];
+			scrollWindowTo(-300);
+			place(500.5, 1100.5);
+			observer.tick();
+			expect(log).toEqual(['onScroll 0 0', 'onDeactivate']);
+		});
+
+		it('should remove both properties on unregister and on destroy', () => {
+			const other = document.createElement('div');
+			document.body.append(other);
+			other.getBoundingClientRect = vi
+				.fn()
+				.mockReturnValue({ top: 300, bottom: 700 });
+
+			place(200, 800);
+			observer.register(element);
+			observer.register(other);
+			expect(values()).toEqual({ offset: '300', progress: '0.5' });
+			expect(other.style.getPropertyValue('--scroll-progress')).toBe('0.5');
+
+			observer.unregister(element);
+			expect(values()).toEqual({ offset: '', progress: '' });
+
+			observer.destroy();
+			expect(other.style.getPropertyValue('--scroll-offset')).toBe('');
+			expect(other.style.getPropertyValue('--scroll-progress')).toBe('');
+			other.remove();
+		});
+	});
+
+	describe('first values', () => {
+		it('should write values and call onScroll when register() activates an element', () => {
+			const onActivate = vi.fn(() => log.push('onActivate'));
+
+			place(300, 700);
+			observer.register(element, { onActivate, onScroll });
+
+			expect(values()).toEqual({ offset: '200', progress: '0.5' });
+			expect(log).toEqual(['onActivate', 'onScroll 200 0.5']);
+		});
+
+		it('should write fresh values after a resize moves the line across an active element', () => {
+			vi.useFakeTimers();
+
+			place(300, 700);
+			observer.register(element, { onScroll });
+			log = [];
+
+			// A taller viewport moves the line from 500 to 600.
+			Object.defineProperty(window, 'innerHeight', {
+				value: 1200,
+				configurable: true,
+			});
+			observer.handleResize();
+			vi.advanceTimersByTime(200);
+			vi.useRealTimers();
+
+			expect(observer.instances.get(element).state).toBe('active');
+			expect(values()).toEqual({ offset: '300', progress: '0.75' });
+			expect(log).toEqual(['onScroll 300 0.75']);
+		});
 	});
 });
