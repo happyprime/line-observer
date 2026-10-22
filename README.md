@@ -124,7 +124,7 @@ observer.getTotalCount(); // 10
 
 ### isActive()
 
-Returns `true` if the internal RAF loop is currently running.
+Returns `true` if the internal RAF loop is currently running. Returns `false` after `destroy()`.
 
 ```js
 observer.isActive(); // true
@@ -165,6 +165,12 @@ observer.register(el, {
   },
 });
 ```
+
+## Errors in callbacks
+
+If `onActivate`, `onDeactivate` or `onScroll` throws, LineObserver reports the error with `reportError()`, or `console.error()` where `reportError()` does not exist, and carries on. Other elements still update in that frame, the loop keeps running, and `register()` returns as usual.
+
+A callback can call `unregister()` or `destroy()`. An element removed that way gets no more classes, styles or callbacks, even if it was due to change state in the same frame.
 
 ## How the trigger line works
 

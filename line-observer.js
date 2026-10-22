@@ -255,6 +255,47 @@ class LineObserver {
 	}
 
 	/**
+	 * Calls a user callback and reports an error it throws.
+	 *
+	 * An uncaught error would leave `tick()` before it requests the next
+	 * frame. `isRunning` stays true, so `startLoop()` never requests one
+	 * again. The error would also skip the rest of the pass, the rest of a
+	 * resize pass, and the rest of a caller's loop over `register()`.
+	 * `reportError()` fires the window `error` event, as an uncaught error
+	 * does, so error trackers still see it.
+	 *
+	 * @param {Function} callback - The user callback.
+	 * @param {...*}     args     - Arguments for the callback.
+	 * @private
+	 */
+	_call(callback, ...args) {
+		try {
+			callback(...args);
+		} catch (error) {
+			if (typeof window.reportError === 'function') {
+				window.reportError(error);
+			} else {
+				console.error(error);
+			}
+		}
+	}
+
+	/**
+	 * Returns whether the instance is still registered.
+	 *
+	 * A callback can unregister an element, or destroy the observer, while a
+	 * pass still holds the instance in its list of writes. `destroy()` clears
+	 * `instances`, so this is false for every instance after it.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @return {boolean} True if the instance is registered.
+	 * @private
+	 */
+	_isRegistered(instance) {
+		return this.instances.get(instance.element) === instance;
+	}
+
+	/**
 	 * Transition instance to new state
 	 *
 	 * An instance that moves to 'active' must be measured with `_measure()`
@@ -265,7 +306,7 @@ class LineObserver {
 	 * @private
 	 */
 	transitionState(instance, newState) {
-		if (newState === instance.state) {
+		if (newState === instance.state || !this._isRegistered(instance)) {
 			return;
 		}
 
@@ -280,7 +321,7 @@ class LineObserver {
 			this.startLoop();
 
 			if (options.onActivate) {
-				options.onActivate(element, instance);
+				this._call(options.onActivate, element, instance);
 			}
 		} else if (oldState === 'active') {
 			// Leaving active state
@@ -293,7 +334,7 @@ class LineObserver {
 			}
 
 			if (options.onDeactivate) {
-				options.onDeactivate(element, instance);
+				this._call(options.onDeactivate, element, instance);
 			}
 		}
 	}
@@ -521,6 +562,10 @@ class LineObserver {
 	 * @private
 	 */
 	_writeOffset(instance, scrollY) {
+		if (!this._isRegistered(instance)) {
+			return;
+		}
+
 		const offset = Math.max(0, scrollY - instance.activationScrollY);
 
 		if (instance.options.cssCustomProperty) {
@@ -528,7 +573,12 @@ class LineObserver {
 		}
 
 		if (instance.options.onScroll) {
-			instance.options.onScroll(offset, instance.element, instance);
+			this._call(
+				instance.options.onScroll,
+				offset,
+				instance.element,
+				instance
+			);
 		}
 	}
 
@@ -614,8 +664,10 @@ class LineObserver {
 		// Update tracking
 		this.lastScrollY = scrollY;
 
-		// Continue loop
-		this.rafId = requestAnimationFrame(this.tick);
+		// A callback can call destroy().
+		if (!this.destroyed) {
+			this.rafId = requestAnimationFrame(this.tick);
+		}
 	}
 
 	/**
@@ -745,6 +797,8 @@ class LineObserver {
 		if (this.rafId) {
 			cancelAnimationFrame(this.rafId);
 		}
+		this.isRunning = false;
+		this.rafId = null;
 
 		// Clear any pending resize timeout
 		if (this.resizeTimeout) {
