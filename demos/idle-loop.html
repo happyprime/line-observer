@@ -33,16 +33,20 @@
 	</style>
 	<script>
 		// Counts the library's RAF callbacks. This runs before the library
-		// loads, so every frame it requests goes through here.
+		// loads, so every frame it requests goes through here. The loop is
+		// shared by every observer on the page, so a frame is the library's
+		// when the library asked for it.
 		window.loopFrames = 0;
 		const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
-		window.requestAnimationFrame = (callback) =>
-			nativeRequestAnimationFrame((time) => {
-				if (window.observer && callback === window.observer.tick) {
+		window.requestAnimationFrame = (callback) => {
+			const fromLibrary = /line-observer\.js/.test(new Error().stack || '');
+			return nativeRequestAnimationFrame((time) => {
+				if (fromLibrary) {
 					window.loopFrames++;
 				}
 				callback(time);
 			});
+		};
 	</script>
 </head>
 <body>
@@ -78,10 +82,10 @@
 		<div class="spacer"></div>
 	</main>
 
-	<script src="../build/line-observer.js"></script>
 	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
 	<script>
-		const { waitFrames, jump, lineInto, offsetOf, setUpChecks } = window.demoCheck;
+		const { waitFrames, jump, lineInto, depthOf, within, offsetOf, setUpChecks } = window.demoCheck;
 
 		const a = document.getElementById('a');
 		const b = document.getElementById('b');
@@ -148,6 +152,16 @@
 
 		const restarted = { stoppedBefore: true, restarted: true, stoppedAfter: true };
 
+		// The page landed within 1px of putting the line `depth` pixels into
+		// the box, and its --scroll-offset is the distance measured now.
+		const offsets = (box, depth) => {
+			const measured = depthOf(box);
+			return {
+				expected: { landed: depth, offset: measured },
+				actual: { landed: within(measured, depth, 1), offset: within(offsetOf(box), measured) },
+			};
+		};
+
 		setUpChecks([
 			{
 				name: 'Scroll A onto the line and rest: the loop stops within a few frames',
@@ -162,17 +176,18 @@
 					const framesToStop = await settle();
 					const start = window.loopFrames;
 					await waitFrames(30);
+					const aAt = offsets(a, 150);
 
 					return {
 						expected: {
 							aActive: true,
-							aOffset: 150,
+							a: aAt.expected,
 							framesToStop: 'at most 4',
 							framesWhileStill: 0,
 						},
 						actual: {
 							aActive: a.classList.contains('is-active'),
-							aOffset: offsetOf(a),
+							a: aAt.actual,
 							framesToStop: framesToStop <= 4 ? 'at most 4' : framesToStop,
 							framesWhileStill: window.loopFrames - start,
 						},
@@ -183,13 +198,14 @@
 				name: 'Anchor link to B while stopped: the loop starts, B is active at 120',
 				run: async () => {
 					const loop = await restartFor(() => follow('#mark'));
+					const bAt = offsets(b, 120);
 					return {
-						expected: { ...restarted, aActive: false, bActive: true, bOffset: 120 },
+						expected: { ...restarted, aActive: false, bActive: true, b: bAt.expected },
 						actual: {
 							...loop,
 							aActive: a.classList.contains('is-active'),
 							bActive: b.classList.contains('is-active'),
-							bOffset: offsetOf(b),
+							b: bAt.actual,
 						},
 					};
 				},
@@ -200,12 +216,13 @@
 					const loop = await restartFor(() =>
 						jump(lineInto(b, 200))
 					);
+					const bAt = offsets(b, 200);
 					return {
-						expected: { ...restarted, bActive: true, bOffset: 200 },
+						expected: { ...restarted, bActive: true, b: bAt.expected },
 						actual: {
 							...loop,
 							bActive: b.classList.contains('is-active'),
-							bOffset: offsetOf(b),
+							b: bAt.actual,
 						},
 					};
 				},

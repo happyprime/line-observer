@@ -82,10 +82,10 @@
 		<div class="spacer"></div>
 	</main>
 
-	<script src="../build/line-observer.js"></script>
 	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
 	<script>
-		const { waitFrames, jump, lineInto, offsetOf, rectOf, triggerLine, setUpChecks } =
+		const { waitFrames, jump, lineInto, depthOf, within, offsetOf, rectOf, triggerLine, setUpChecks } =
 			window.demoCheck;
 
 		const a = document.getElementById('a');
@@ -95,7 +95,7 @@
 
 		const progressOf = (box) => {
 			const value = box.style.getPropertyValue('--scroll-progress');
-			return value === '' ? null : Math.round(Number(value) * 1000) / 1000;
+			return value === '' ? null : Number(value);
 		};
 
 		const show = (box) => {
@@ -138,29 +138,29 @@
 		// Reads the scale or the move a child's transform shows.
 		const matrixOf = (element) => new DOMMatrixReadOnly(getComputedStyle(element).transform);
 
-		const round = (value) => Math.round(value * 1000) / 1000;
-
-		// What LineObserver wrote, and what the children show.
-		const actual = (box) => ({
-			active: box.classList.contains('is-active'),
-			offset: offsetOf(box),
-			progress: progressOf(box),
-			bar: round(matrixOf(box.querySelector('.bar')).a),
-			dot: Math.round(matrixOf(box.querySelector('.dot')).e),
-		});
-
-		// What the box's position says, now. A box past the line holds 1,
-		// and one below it holds 0.
-		const expected = (box) => {
+		// What the box's position says, now, and what LineObserver wrote and
+		// the children show, each within half a pixel of the offset. A box
+		// past the line holds 1, and one below it holds 0.
+		const compare = (box) => {
 			const rect = rectOf(box);
 			const offset = Math.min(rect.height, Math.max(0, triggerLine() - rect.top));
-			const progress = round(offset / rect.height);
+			const progress = offset / rect.height;
+			const tolerance = 0.5 / rect.height;
 			return {
-				active: rect.top <= triggerLine() && rect.bottom > triggerLine(),
-				offset: Math.round(offset),
-				progress,
-				bar: progress,
-				dot: Math.round(progress * 200),
+				expected: {
+					active: rect.top <= triggerLine() && rect.bottom > triggerLine(),
+					offset,
+					progress,
+					bar: progress,
+					dot: progress * 200,
+				},
+				actual: {
+					active: box.classList.contains('is-active'),
+					offset: within(offsetOf(box), offset),
+					progress: within(progressOf(box), progress, tolerance),
+					bar: within(matrixOf(box.querySelector('.bar')).a, progress, tolerance),
+					dot: within(matrixOf(box.querySelector('.dot')).e, progress * 200, tolerance * 200),
+				},
 			};
 		};
 
@@ -176,7 +176,7 @@
 				run: async () => {
 					await reset();
 					await jump(lineInto(b, 300));
-					return { expected: expected(b), actual: actual(b) };
+					return compare(b);
 				},
 			},
 			{
@@ -184,15 +184,18 @@
 				run: async () => {
 					await reset();
 					await jump(lineInto(b, 340));
-					const before = { scrollY: window.scrollY, top: rectOf(b).top };
+					const before = { scrollY: window.scrollY, top: rectOf(b).top, depth: depthOf(b) };
 					await insert();
 					const after = { scrollY: window.scrollY, top: rectOf(b).top };
+					const values = compare(b);
 					const result = {
-						expected: { anchored: 300, moved: 0, ...expected(b), offset: 340 },
+						expected: { landed: 340, anchored: 300, moved: 0, ...values.expected, offset: before.depth },
 						actual: {
-							anchored: Math.round(after.scrollY - before.scrollY),
-							moved: Math.round(after.top - before.top),
-							...actual(b),
+							landed: within(before.depth, 340, 1),
+							anchored: within(after.scrollY - before.scrollY, 300),
+							moved: within(after.top - before.top, 0),
+							...values.actual,
+							offset: within(offsetOf(b), before.depth),
 						},
 					};
 					await removeInserted();
@@ -205,7 +208,7 @@
 					await reset();
 					await jump(lineInto(a, 300));
 					await jump(lineInto(a, 700));
-					const passed = { expected: expected(a), actual: actual(a) };
+					const passed = compare(a);
 
 					// 60px steps up until the line is 100px above A's top edge.
 					for (let depth = 640; depth >= -100; depth -= 60) {
@@ -214,12 +217,14 @@
 					}
 					await waitFrames();
 
+					const above = compare(a);
+
 					return {
 						expected: {
 							passed: { ...passed.expected, offset: 600, progress: 1 },
-							above: { ...expected(a), offset: 0, progress: 0 },
+							above: { ...above.expected, offset: 0, progress: 0 },
 						},
-						actual: { passed: passed.actual, above: actual(a) },
+						actual: { passed: passed.actual, above: above.actual },
 					};
 				},
 			},
@@ -231,11 +236,12 @@
 					c.style.height = '1000px';
 					await waitFrames();
 					await jump(window.scrollY + 50);
+					const values = compare(c);
 					return {
-						expected: { ...expected(c), height: 1000 },
+						expected: { ...values.expected, height: 1000 },
 						actual: {
-							...actual(c),
-							height: Math.round(observer.instances.get(c).elementHeight),
+							...values.actual,
+							height: within(observer.instances.get(c).elementHeight, 1000),
 						},
 					};
 				},

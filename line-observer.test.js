@@ -1,5 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { LineObserver } from './line-observer.js';
+import { LineObserver as SharedLoopObserver } from './line-observer.js';
+
+// Every LineObserver joins one scheduler for the whole module, so an
+// observer a test leaves behind would keep the loop, the listeners or a
+// resize timer for the next test. Each test destroys the ones it made.
+const created = [];
+
+class LineObserver extends SharedLoopObserver {
+	constructor(options) {
+		super(options);
+		created.push(this);
+	}
+}
 
 // Mock IntersectionObserver
 class MockIntersectionObserver {
@@ -14,6 +26,12 @@ class MockIntersectionObserver {
 		this.observedElements.push(element);
 	}
 
+	unobserve(element) {
+		this.observedElements = this.observedElements.filter(
+			(observed) => observed !== element
+		);
+	}
+
 	disconnect() {
 		this.observedElements = [];
 	}
@@ -25,6 +43,28 @@ class MockIntersectionObserver {
 }
 
 MockIntersectionObserver.instances = [];
+
+// RAF callbacks wait here until a test runs a frame.
+let pendingFrames = new Map();
+let nextFrameId = 1;
+
+// Runs the RAF callbacks requested before this frame.
+const frame = () => {
+	const callbacks = [...pendingFrames.values()];
+	pendingFrames.clear();
+	callbacks.forEach((callback) => callback(performance.now()));
+};
+
+// Runs one frame of the shared loop, with a pass for `observer`. A test
+// that fills an observer's sets by hand gets the pass a report would have
+// started.
+const tick = (observer) => {
+	observer.startLoop();
+	frame();
+};
+
+// Fires the resize event a browser would fire.
+const resize = () => window.dispatchEvent(new Event('resize'));
 
 // Sets window.scrollY and fires the scroll event a browser would fire.
 const scrollWindowTo = (value) => {
@@ -61,17 +101,24 @@ beforeEach(() => {
 	});
 
 	// Mock requestAnimationFrame
+	pendingFrames = new Map();
+	nextFrameId = 1;
 	vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
-		return setTimeout(cb, 16);
+		pendingFrames.set(nextFrameId, cb);
+		return nextFrameId++;
 	});
 
 	vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
-		clearTimeout(id);
+		pendingFrames.delete(id);
 	});
 });
 
 afterEach(() => {
 	vi.restoreAllMocks();
+});
+
+afterEach(() => {
+	created.splice(0).forEach((observer) => observer.destroy());
 });
 
 describe('LineObserver', () => {
@@ -108,7 +155,7 @@ describe('LineObserver', () => {
 			expect(observer.instances).toBeInstanceOf(Map);
 			expect(observer.activeInstances).toBeInstanceOf(Set);
 			expect(observer.isRunning).toBe(false);
-			expect(observer.rafId).toBeNull();
+			expect(window.requestAnimationFrame).not.toHaveBeenCalled();
 			expect(observer.currentDirection).toBe('down');
 		});
 
@@ -436,7 +483,7 @@ describe('LineObserver', () => {
 			observer.destroy();
 
 			expect(observer.isActive()).toBe(false);
-			expect(observer.rafId).toBeNull();
+			expect(pendingFrames.size).toBe(0);
 		});
 	});
 
@@ -521,16 +568,18 @@ describe('LineObserver', () => {
 
 			expect(removeEventListenerSpy).toHaveBeenCalledWith(
 				'resize',
-				observer.handleResize
+				expect.any(Function)
 			);
 		});
 
 		it('should cancel animation frame if running', () => {
-			observer.rafId = 123;
+			observer.nearInstances.add({});
+			observer.startLoop();
+			const [{ value: id }] = window.requestAnimationFrame.mock.results;
 
 			observer.destroy();
 
-			expect(window.cancelAnimationFrame).toHaveBeenCalledWith(123);
+			expect(window.cancelAnimationFrame).toHaveBeenCalledWith(id);
 		});
 	});
 
@@ -823,7 +872,7 @@ describe('LineObserver', () => {
 				configurable: true,
 			});
 
-			observer.handleResize();
+			resize();
 			vi.advanceTimersByTime(200); // Debounce delay is 150ms
 
 			expect(observer.viewportHeight).toBe(800);
@@ -838,7 +887,7 @@ describe('LineObserver', () => {
 				configurable: true,
 			});
 
-			observer.handleResize();
+			resize();
 			vi.advanceTimersByTime(100); // Less than debounce delay
 
 			// Should not have updated yet
@@ -862,7 +911,11 @@ describe('LineObserver', () => {
 
 			const initialObserverCount = MockIntersectionObserver.instances.length;
 
-			observer.handleResize();
+			Object.defineProperty(window, 'innerHeight', {
+				value: 800,
+				configurable: true,
+			});
+			resize();
 			vi.advanceTimersByTime(200);
 
 			// A new near observer and a new edge observer
@@ -926,22 +979,22 @@ describe('element validation in register()', () => {
 });
 
 describe('destroyed flag', () => {
-	it('should prevent tick() from processing after destroy()', () => {
+	it('should give a destroyed observer no pass in a frame of the shared loop', () => {
 		const observer = new LineObserver();
+		const other = new LineObserver();
 		const element = document.createElement('div');
-		document.body.appendChild(element);
+		const otherElement = document.createElement('div');
+		document.body.append(element, otherElement);
 
-		element.getBoundingClientRect = vi.fn().mockReturnValue({
-			top: 400,
-			bottom: 700,
-		});
-
-		Object.defineProperty(element, 'offsetHeight', {
-			value: 300,
-			configurable: true,
-		});
+		for (const target of [element, otherElement]) {
+			target.getBoundingClientRect = vi.fn().mockReturnValue({
+				top: 400,
+				bottom: 700,
+			});
+		}
 
 		observer.register(element);
+		other.register(otherElement);
 
 		// Force-activate to get into active state
 		const instance = observer.instances.get(element);
@@ -950,14 +1003,23 @@ describe('destroyed flag', () => {
 
 		observer.destroy();
 
-		// Simulate tick being called after destroy (e.g., from pending RAF)
+		// Simulate a frame of the loop, which `other` keeps running, after
+		// destroy.
 		observer.isRunning = true;
 		observer.activeInstances.add(instance);
-		observer.tick();
+		element.getBoundingClientRect.mockClear();
+		otherElement.getBoundingClientRect.mockClear();
+		Object.defineProperty(window, 'scrollY', {
+			value: 100,
+			configurable: true,
+		});
+		frame();
 
-		expect(observer.isRunning).toBe(false);
+		expect(element.getBoundingClientRect).not.toHaveBeenCalled();
+		expect(otherElement.getBoundingClientRect).toHaveBeenCalled();
 
-		document.body.removeChild(element);
+		element.remove();
+		otherElement.remove();
 	});
 
 	it('should prevent handleIntersection() after destroy()', () => {
@@ -991,7 +1053,7 @@ describe('destroyed flag', () => {
 		vi.useFakeTimers();
 		const observer = new LineObserver();
 
-		observer.handleResize();
+		resize();
 		observer.destroy();
 
 		Object.defineProperty(window, 'innerHeight', {
@@ -1117,7 +1179,7 @@ describe('cssCustomProperty option', () => {
 		});
 
 		const setPropertySpy = vi.spyOn(element.style, 'setProperty');
-		observer.tick();
+		tick(observer);
 
 		expect(setPropertySpy).not.toHaveBeenCalledWith(
 			'--scroll-offset',
@@ -1196,7 +1258,7 @@ describe('detached element cleanup', () => {
 		});
 
 		// Run tick - should auto-deactivate the detached element
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('inactive');
 		expect(observer.activeInstances.has(instance)).toBe(false);
@@ -1245,7 +1307,7 @@ describe('activateFrom filtering in tick()', () => {
 			configurable: true,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 	});
@@ -1264,7 +1326,7 @@ describe('activateFrom filtering in tick()', () => {
 		observer.lastScrollY = 200;
 		scrollWindowTo(100);
 
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('inactive');
 	});
@@ -1283,7 +1345,7 @@ describe('activateFrom filtering in tick()', () => {
 		observer.lastScrollY = 200;
 		scrollWindowTo(100);
 
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 	});
@@ -1304,7 +1366,7 @@ describe('activateFrom filtering in tick()', () => {
 			configurable: true,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('inactive');
 	});
@@ -1322,7 +1384,7 @@ describe('activateFrom filtering in tick()', () => {
 		scrollWindowTo(200);
 		observer.lastScrollY = 200;
 		scrollWindowTo(100);
-		observer.tick();
+		tick(observer);
 		expect(instance.state).toBe('active');
 
 		// Scroll wrong direction (scrollY increasing): element passes above trigger
@@ -1335,7 +1397,7 @@ describe('activateFrom filtering in tick()', () => {
 			value: 200,
 			configurable: true,
 		});
-		observer.tick();
+		tick(observer);
 
 		// Deactivation to 'passed' suppressed — wrong direction for 'above'
 		expect(instance.state).toBe('active');
@@ -1356,7 +1418,7 @@ describe('activateFrom filtering in tick()', () => {
 			value: 200,
 			configurable: true,
 		});
-		observer.tick();
+		tick(observer);
 		expect(instance.state).toBe('active');
 
 		// Scroll wrong direction (scrollY decreasing): element drops below trigger
@@ -1367,7 +1429,7 @@ describe('activateFrom filtering in tick()', () => {
 		scrollWindowTo(200);
 		observer.lastScrollY = 200;
 		scrollWindowTo(100);
-		observer.tick();
+		tick(observer);
 
 		// Deactivation to 'inactive' suppressed — wrong direction for 'below'
 		expect(instance.state).toBe('active');
@@ -1392,7 +1454,7 @@ describe('activateFrom filtering in tick()', () => {
 			value: 300,
 			configurable: true,
 		});
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('passed');
 	});
@@ -1415,7 +1477,7 @@ describe('activateFrom filtering in tick()', () => {
 			value: 300,
 			configurable: true,
 		});
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 	});
@@ -1438,7 +1500,7 @@ describe('activateFrom filtering in tick()', () => {
 			value: 300,
 			configurable: true,
 		});
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('passed');
 	});
@@ -1460,7 +1522,7 @@ describe('activateFrom filtering in tick()', () => {
 		window.requestAnimationFrame.mockClear();
 
 		// Tick should stop the loop and NOT schedule another RAF
-		observer.tick();
+		tick(observer);
 		expect(observer.isRunning).toBe(false);
 		expect(window.requestAnimationFrame).not.toHaveBeenCalled();
 	});
@@ -1488,7 +1550,7 @@ describe('activateFrom filtering in tick()', () => {
 		});
 
 		const transitionSpy = vi.spyOn(observer, 'transitionState');
-		observer.tick();
+		tick(observer);
 
 		// transitionState called once (from near-instances pass), not twice
 		expect(transitionSpy).toHaveBeenCalledTimes(1);
@@ -1540,7 +1602,7 @@ describe('tick() offset and onScroll', () => {
 			bottom: 550,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		// offset = triggerLine(500) - top(250) = 250
 		expect(onScroll).toHaveBeenLastCalledWith(250, element, instance);
@@ -1565,7 +1627,7 @@ describe('tick() offset and onScroll', () => {
 			bottom: 550,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		expect(element.style.getPropertyValue('--scroll-offset')).toBe('250');
 	});
@@ -1591,7 +1653,7 @@ describe('tick() offset and onScroll', () => {
 			configurable: true,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		// onScroll should not be called when scroll hasn't changed
 		expect(onScroll).not.toHaveBeenCalled();
@@ -1697,9 +1759,13 @@ describe('resize state re-evaluation', () => {
 			top: 400,
 			bottom: 700,
 		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: 900,
+			configurable: true,
+		});
 
 		// Trigger resize handler
-		observer.handleResize();
+		resize();
 		vi.advanceTimersByTime(200);
 
 		expect(instance.state).toBe('active');
@@ -1813,7 +1879,7 @@ describe('active-instances deactivation (upward fast scroll)', () => {
 			value: 100,
 			configurable: true,
 		});
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('inactive');
 	});
@@ -1865,7 +1931,7 @@ describe('checkInitialState with activateFrom', () => {
 });
 
 describe('resize with activateFrom', () => {
-	it('should activate on resize regardless of activateFrom', () => {
+	it('should activate on resize when activateFrom allows the last direction', () => {
 		vi.useFakeTimers();
 		const observer = new LineObserver({ triggerLine: '50vh' });
 		const element = document.createElement('div');
@@ -1889,11 +1955,16 @@ describe('resize with activateFrom', () => {
 			top: 400,
 			bottom: 700,
 		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: 900,
+			configurable: true,
+		});
 
-		observer.handleResize();
+		resize();
 		vi.advanceTimersByTime(200);
 
-		// Should activate despite activateFrom filtering (resize has no scroll direction)
+		// The last scroll went down, the way 'below' activates.
+		expect(observer.getDirection()).toBe('down');
 		expect(instance.state).toBe('active');
 
 		document.body.removeChild(element);
@@ -2014,7 +2085,7 @@ describe('detached element in near-instances pass', () => {
 		});
 		observer.lastScrollY = 100;
 
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('inactive');
 		expect(observer.activeInstances.has(instance)).toBe(false);
@@ -2082,7 +2153,7 @@ describe('offset clamping', () => {
 			bottom: 820,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 		expect(onScroll).toHaveBeenLastCalledWith(0, element, instance);
@@ -2114,7 +2185,7 @@ describe('offset clamping', () => {
 			bottom: 200,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 		expect(onScroll).toHaveBeenLastCalledWith(300, element, instance);
@@ -2135,7 +2206,7 @@ describe('resize debounce behavior', () => {
 			value: 800,
 			configurable: true,
 		});
-		observer.handleResize();
+		resize();
 
 		// Second resize before debounce fires
 		vi.advanceTimersByTime(100);
@@ -2143,7 +2214,7 @@ describe('resize debounce behavior', () => {
 			value: 600,
 			configurable: true,
 		});
-		observer.handleResize();
+		resize();
 
 		// Third resize before debounce fires
 		vi.advanceTimersByTime(100);
@@ -2151,7 +2222,7 @@ describe('resize debounce behavior', () => {
 			value: 1200,
 			configurable: true,
 		});
-		observer.handleResize();
+		resize();
 
 		// Let debounce fire
 		vi.advanceTimersByTime(200);
@@ -2220,7 +2291,7 @@ describe('offset precision', () => {
 			top: 480,
 			bottom: 780,
 		});
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 		expect(instance.offset).toBe(20);
@@ -2260,7 +2331,7 @@ describe('offset precision', () => {
 			top: 250,
 			bottom: 550,
 		});
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 		expect(instance.offset).toBe(250);
@@ -2286,7 +2357,7 @@ describe('offset precision', () => {
 		const instance = observer.instances.get(element);
 		expect(instance.state).toBe('inactive');
 
-		// After resize, element now spans trigger line
+		// After resize, element now spans trigger line, which is at 550.
 		Object.defineProperty(window, 'scrollY', {
 			value: 100,
 			configurable: true,
@@ -2295,13 +2366,17 @@ describe('offset precision', () => {
 			top: 300,
 			bottom: 700,
 		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: 1100,
+			configurable: true,
+		});
 
-		observer.handleResize();
+		resize();
 		vi.advanceTimersByTime(200);
 
 		expect(instance.state).toBe('active');
-		expect(instance.offset).toBe(200);
-		expect(element.style.getPropertyValue('--scroll-offset')).toBe('200');
+		expect(instance.offset).toBe(250);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('250');
 
 		document.body.removeChild(element);
 		observer.destroy();
@@ -2325,7 +2400,7 @@ describe('nearMargin IO rootMargin', () => {
 
 		// topMargin = -500 + 200 = -300
 		// bottomMargin = -(1000 - 500 - 200) = -300
-		expect(instance.observer.options.rootMargin).toBe(
+		expect(instance.near.observer.options.rootMargin).toBe(
 			'-300px 0px -300px 0px'
 		);
 
@@ -2348,7 +2423,7 @@ describe('nearMargin IO rootMargin', () => {
 
 		// topMargin = -500 + 100 = -400
 		// bottomMargin = -(1000 - 500 - 100) = -400
-		expect(instance.observer.options.rootMargin).toBe(
+		expect(instance.near.observer.options.rootMargin).toBe(
 			'-400px 0px -400px 0px'
 		);
 
@@ -2405,7 +2480,7 @@ describe('multiple elements in a single tick', () => {
 			bottom: 800,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		expect(inst1.state).toBe('active');
 		expect(onActivate1).toHaveBeenCalled();
@@ -2450,7 +2525,7 @@ describe('multiple elements in a single tick', () => {
 			bottom: 200,
 		});
 
-		observer.tick();
+		tick(observer);
 
 		// Should have been deactivated in near pass
 		expect(inst.state).toBe('passed');
@@ -2493,7 +2568,7 @@ describe('destroy during pending RAF', () => {
 		observer.destroy();
 
 		// Manually invoke tick as if the queued RAF fired
-		observer.tick();
+		tick(observer);
 
 		// Should not have called onScroll — destroyed flag prevents work
 		expect(onScroll).not.toHaveBeenCalled();
@@ -2782,13 +2857,13 @@ describe('a jump that ends at rest', () => {
 
 		// This tick sees the jump, but IntersectionObserver has not yet
 		// said the second element is near.
-		observer.tick();
+		tick(observer);
 		expect(firstInstance.state).toBe('passed');
 		expect(onActivate).not.toHaveBeenCalled();
 
 		// Now it does, with the page at rest.
 		observer.handleIntersection([{ isIntersecting: true }], secondInstance);
-		observer.tick();
+		tick(observer);
 
 		expect(onActivate).toHaveBeenCalledWith(second, secondInstance);
 		expect(secondInstance.state).toBe('active');
@@ -2801,11 +2876,11 @@ describe('a jump that ends at rest', () => {
 		const instance = observer.instances.get(first);
 
 		observer.handleIntersection([{ isIntersecting: true }], instance);
-		observer.tick();
+		tick(observer);
 
 		first.getBoundingClientRect.mockClear();
-		observer.tick();
-		observer.tick();
+		tick(observer);
+		tick(observer);
 
 		expect(first.getBoundingClientRect).not.toHaveBeenCalled();
 	});
@@ -2827,13 +2902,13 @@ describe('a jump that ends at rest', () => {
 		scrollTo(1000);
 		place(first, -600, -300);
 		place(second, 300, 700);
-		observer.tick();
+		tick(observer);
 
 		observer.handleIntersection(
 			[{ isIntersecting: true }],
 			observer.instances.get(second)
 		);
-		observer.tick();
+		tick(observer);
 
 		// The page moved down to get here, so an element that activates
 		// only from below still does.
@@ -2859,7 +2934,7 @@ describe('a jump that ends at rest', () => {
 			[{ isIntersecting: true }],
 			observer.instances.get(first)
 		);
-		observer.tick();
+		tick(observer);
 
 		expect(observer.getDirection()).toBe('down');
 		expect(onActivate).toHaveBeenCalledTimes(1);
@@ -2905,12 +2980,12 @@ describe('activation after a jump', () => {
 		observer.register(element, { onScroll });
 		const instance = observer.instances.get(element);
 		observer.handleIntersection([{ isIntersecting: true }], instance);
-		observer.tick();
+		tick(observer);
 
 		// A 400px jump down leaves the line 350px into the element.
 		scrollTo(400);
 		place(150, 600);
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 		expect(instance.offset).toBe(350);
@@ -2929,13 +3004,13 @@ describe('activation after a jump', () => {
 		const instance = observer.instances.get(element);
 		expect(instance.state).toBe('passed');
 		observer.handleIntersection([{ isIntersecting: true }], instance);
-		observer.tick();
+		tick(observer);
 		onScroll.mockClear();
 
 		// A 400px jump up leaves the line 50px into the element.
 		scrollTo(600);
 		place(450, 900);
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 		expect(instance.offset).toBe(50);
@@ -2956,7 +3031,7 @@ describe('activation after a jump', () => {
 		scrollTo(1000);
 		place(300, 750);
 		observer.handleIntersection([{ isIntersecting: true }], instance);
-		observer.tick();
+		tick(observer);
 
 		expect(instance.state).toBe('active');
 		expect(instance.offset).toBe(200);
@@ -3054,7 +3129,7 @@ describe('read and write order', () => {
 		rects.d = { top: 50, bottom: 450 };
 
 		log = [];
-		observer.tick();
+		tick(observer);
 
 		expect(observer.instances.get(a).state).toBe('active');
 		expect(observer.instances.get(b).state).toBe('active');
@@ -3085,7 +3160,7 @@ describe('read and write order', () => {
 		});
 
 		log = [];
-		observer.handleResize();
+		resize();
 		vi.advanceTimersByTime(200);
 		vi.useRealTimers();
 
@@ -3129,7 +3204,7 @@ describe('a pass at rest', () => {
 		place(active, 300, 600);
 		observer.register(active, { onScroll });
 		report(active, true);
-		observer.tick();
+		tick(observer);
 		expect(observer.instances.get(active).state).toBe('active');
 
 		vi.spyOn(active.style, 'setProperty');
@@ -3149,7 +3224,7 @@ describe('a pass at rest', () => {
 		observer.register(other);
 		place(other, 550, 850);
 		report(other, true);
-		observer.tick();
+		tick(observer);
 
 		expect(other.getBoundingClientRect).toHaveBeenCalled();
 		expect(observer.instances.get(other).state).toBe('inactive');
@@ -3167,7 +3242,7 @@ describe('a pass at rest', () => {
 		observer.register(other, { onScroll: otherScroll });
 		place(other, 380, 680);
 		report(other, true);
-		observer.tick();
+		tick(observer);
 
 		const instance = observer.instances.get(other);
 		expect(instance.state).toBe('active');
@@ -3186,14 +3261,14 @@ describe('a pass at rest', () => {
 		place(near, 560, 860);
 		observer.register(near);
 		report(near, true);
-		observer.tick();
+		tick(observer);
 		near.getBoundingClientRect.mockClear();
 
 		place(other, 1300, 1600);
 		observer.register(other);
 		place(other, 550, 850);
 		report(other, true);
-		observer.tick();
+		tick(observer);
 
 		expect(other.getBoundingClientRect).toHaveBeenCalledTimes(1);
 		expect(near.getBoundingClientRect).not.toHaveBeenCalled();
@@ -3210,7 +3285,7 @@ describe('a pass at rest', () => {
 		// band, below the line.
 		place(active, 1100, 1400);
 		report(active, false);
-		observer.tick();
+		tick(observer);
 
 		expect(observer.instances.get(active).state).toBe('inactive');
 		expect(active.classList.contains('is-active')).toBe(false);
@@ -3228,7 +3303,7 @@ describe('a pass at rest', () => {
 		// band, above the line.
 		place(active, -500, -200);
 		report(active, false);
-		observer.tick();
+		tick(observer);
 
 		expect(observer.instances.get(active).state).toBe('passed');
 		expect(active.classList.contains('is-active')).toBe(false);
@@ -3249,9 +3324,9 @@ describe('a pass at rest', () => {
 		other.getBoundingClientRect.mockClear();
 		lone.handleIntersection([{ isIntersecting: true }], lone.instances.get(other));
 		lone.handleIntersection([{ isIntersecting: false }], lone.instances.get(other));
-		lone.tick();
+		tick(lone);
 		expect(other.getBoundingClientRect).toHaveBeenCalledTimes(1);
-		lone.tick();
+		tick(lone);
 		expect(lone.isActive()).toBe(false);
 
 		// An element registered across the line starts the loop again.
@@ -3260,7 +3335,7 @@ describe('a pass at rest', () => {
 		late.getBoundingClientRect.mockClear();
 		other.getBoundingClientRect.mockClear();
 		lateScroll.mockClear();
-		lone.tick();
+		tick(lone);
 
 		expect(other.getBoundingClientRect).not.toHaveBeenCalled();
 		expect(late.getBoundingClientRect).not.toHaveBeenCalled();
@@ -3276,7 +3351,7 @@ describe('a pass at rest', () => {
 		place(other, 550, 850);
 		report(other, true);
 		observer.unregister(other);
-		observer.tick();
+		tick(observer);
 
 		expect(active.getBoundingClientRect).not.toHaveBeenCalled();
 		expect(onScroll).not.toHaveBeenCalled();
@@ -3319,7 +3394,7 @@ describe('direction while the loop is stopped', () => {
 				observer.instances.get(element)
 			);
 		}
-		observer.tick();
+		tick(observer);
 	};
 
 	const stateOf = (element) => observer.instances.get(element).state;
@@ -3388,7 +3463,7 @@ describe('direction while the loop is stopped', () => {
 				observer.instances.get(element)
 			);
 		}
-		observer.tick();
+		tick(observer);
 
 		// An anchor jump moves the page up 100px. Chromium runs RAF
 		// callbacks before the scroll event for it.
@@ -3398,7 +3473,7 @@ describe('direction while the loop is stopped', () => {
 		});
 		place(below, 250, 550);
 		place(above, 250, 550);
-		observer.tick();
+		tick(observer);
 
 		expect(observer.getDirection()).toBe('up');
 		expect(stateOf(above)).toBe('active');
@@ -3413,8 +3488,143 @@ describe('direction while the loop is stopped', () => {
 
 		expect(removeEventListenerSpy).toHaveBeenCalledWith(
 			'scroll',
-			observer.trackDirection
+			expect.any(Function)
 		);
+	});
+});
+
+describe('small moves and the direction', () => {
+	let observer;
+	let below;
+	let above;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const placeBoth = (top, bottom) => {
+		place(below, top, bottom);
+		place(above, top, bottom);
+	};
+
+	// Moves the page, as a scroll event and the frame after it.
+	const scrollAndFrame = (scrollY, top, bottom) => {
+		placeBoth(top, bottom);
+		scrollWindowTo(scrollY);
+		frame();
+	};
+
+	const stateOf = (element) => observer.instances.get(element).state;
+
+	const setDevicePixelRatio = (value) => {
+		Object.defineProperty(window, 'devicePixelRatio', {
+			value,
+			configurable: true,
+			writable: true,
+		});
+	};
+
+	beforeEach(() => {
+		below = document.createElement('div');
+		above = document.createElement('div');
+		document.body.append(below, above);
+		setDevicePixelRatio(1);
+	});
+
+	afterEach(() => {
+		below.remove();
+		above.remove();
+		observer.destroy();
+		setDevicePixelRatio(1);
+	});
+
+	// The line is at 500. Both 600px boxes start just past it, as in
+	// demos/jump-direction.html, and IO reports them near.
+	const startPastBoth = (scrollY) => {
+		scrollWindowTo(scrollY - 10);
+		observer = new LineObserver({ triggerLine: '50vh' });
+		placeBoth(-140, 460);
+		observer.register(below, { activateFrom: 'below' });
+		observer.register(above, { activateFrom: 'above' });
+		for (const element of [below, above]) {
+			observer.handleIntersection(
+				[{ isIntersecting: true }],
+				observer.instances.get(element)
+			);
+		}
+		scrollAndFrame(scrollY, -150, 450);
+	};
+
+	it('should keep the direction of an anchor jump up that ends 1px down', () => {
+		// Firefox goes to an anchor at 459.5 in two steps: 459, then 460.
+		startPastBoth(1009);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollAndFrame(459, 400.5, 1000.5);
+		scrollAndFrame(460, 400, 1000);
+
+		expect(observer.getDirection()).toBe('up');
+		expect(stateOf(above)).toBe('active');
+		expect(stateOf(below)).toBe('passed');
+		expect(below.classList.contains('is-active')).toBe(false);
+
+		// The 1px move still ran a pass.
+		expect(observer.instances.get(above).offset).toBe(100);
+		expect(above.style.getPropertyValue('--scroll-offset')).toBe('100');
+	});
+
+	it('should keep the direction when a step of one device pixel is more than 1px', () => {
+		// Firefox at 90% zoom: 458.95, then 460.0667. The step is 1.1167px,
+		// a little more than one device pixel.
+		setDevicePixelRatio(0.9);
+		startPastBoth(1009.4667);
+
+		scrollAndFrame(458.95, 401.05, 1001.05);
+		scrollAndFrame(460.0667, 399.9333, 999.9333);
+
+		expect(observer.getDirection()).toBe('up');
+		expect(stateOf(below)).toBe('passed');
+	});
+
+	it('should set the direction after slow 1px steps add up', () => {
+		observer = new LineObserver({ triggerLine: '50vh' });
+		scrollWindowTo(1000);
+		scrollWindowTo(900);
+		expect(observer.getDirection()).toBe('up');
+
+		scrollWindowTo(901);
+		expect(observer.getDirection()).toBe('up');
+
+		scrollWindowTo(902);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollWindowTo(903);
+		scrollWindowTo(904);
+		expect(observer.getDirection()).toBe('down');
+	});
+
+	it('should change the direction on a 2px move back', () => {
+		observer = new LineObserver({ triggerLine: '50vh' });
+		scrollWindowTo(1000);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollWindowTo(998);
+		expect(observer.getDirection()).toBe('up');
+
+		scrollWindowTo(1000);
+		expect(observer.getDirection()).toBe('down');
+	});
+
+	it('should hold the direction through 1px moves back at a high device pixel ratio', () => {
+		setDevicePixelRatio(3);
+		observer = new LineObserver({ triggerLine: '50vh' });
+		scrollWindowTo(1000);
+
+		scrollWindowTo(999);
+		expect(observer.getDirection()).toBe('down');
+
+		scrollWindowTo(998.5);
+		expect(observer.getDirection()).toBe('up');
 	});
 });
 
@@ -3470,7 +3680,7 @@ describe('a callback that throws', () => {
 		observer.register(b, { onScroll });
 		report(a);
 		report(b);
-		observer.tick();
+		tick(observer);
 
 		// A 100px scroll moves the line 50px into `b`.
 		scrollWindowTo(100);
@@ -3478,7 +3688,7 @@ describe('a callback that throws', () => {
 		place(b, 450, 750);
 		window.requestAnimationFrame.mockClear();
 
-		expect(() => observer.tick()).not.toThrow();
+		expect(() => tick(observer)).not.toThrow();
 
 		const instance = observer.instances.get(b);
 		expect(instance.state).toBe('active');
@@ -3500,14 +3710,14 @@ describe('a callback that throws', () => {
 		observer.register(b, { onActivate, onScroll });
 		report(a);
 		report(b);
-		observer.tick();
+		tick(observer);
 
 		scrollWindowTo(100);
 		place(a, 450, 750);
 		place(b, 460, 760);
 		window.requestAnimationFrame.mockClear();
 
-		expect(() => observer.tick()).not.toThrow();
+		expect(() => tick(observer)).not.toThrow();
 
 		expect(a.classList.contains('is-active')).toBe(true);
 		expect(b.classList.contains('is-active')).toBe(true);
@@ -3526,14 +3736,14 @@ describe('a callback that throws', () => {
 		observer.register(b, { onDeactivate });
 		report(a);
 		report(b);
-		observer.tick();
+		tick(observer);
 
 		// Both pass the line.
 		scrollWindowTo(100);
 		place(a, 150, 450);
 		place(b, 160, 460);
 
-		expect(() => observer.tick()).not.toThrow();
+		expect(() => tick(observer)).not.toThrow();
 
 		expect(observer.instances.get(a).state).toBe('passed');
 		expect(b.classList.contains('is-active')).toBe(false);
@@ -3571,7 +3781,7 @@ describe('a callback that throws', () => {
 			value: 1400,
 			configurable: true,
 		});
-		observer.handleResize();
+		resize();
 
 		expect(() => vi.advanceTimersByTime(200)).not.toThrow();
 		vi.useRealTimers();
@@ -3612,12 +3822,12 @@ describe('a callback that unregisters or destroys', () => {
 				observer.instances.get(element)
 			);
 		}
-		observer.tick();
+		tick(observer);
 
 		scrollWindowTo(100);
 		place(a, 450, 750);
 		place(b, 460, 760);
-		observer.tick();
+		tick(observer);
 	};
 
 	beforeEach(() => {
@@ -3881,7 +4091,7 @@ describe('the loop at rest', () => {
 			value: 1400,
 			configurable: true,
 		});
-		observer.handleResize();
+		resize();
 		vi.advanceTimersByTime(200);
 		vi.useRealTimers();
 
@@ -3957,14 +4167,14 @@ describe('offset and progress from the position', () => {
 			place(160, 760);
 			observer.register(element, { onScroll });
 			report();
-			observer.tick();
+			tick(observer);
 			onScroll.mockClear();
 			vi.spyOn(element.style, 'setProperty');
 
 			// 300px of content goes in above. Scroll anchoring adds 300 to
 			// scrollY and leaves the element where it was.
 			scrollWindowTo(1300);
-			observer.tick();
+			tick(observer);
 
 			const instance = observer.instances.get(element);
 			expect(instance.state).toBe('active');
@@ -3979,13 +4189,13 @@ describe('offset and progress from the position', () => {
 			place(160, 760);
 			observer.register(element, { onScroll });
 			report();
-			observer.tick();
+			tick(observer);
 			onScroll.mockClear();
 
 			// A modal sets `position: fixed` on the body and offsets it, so
 			// scrollY is 0 and nothing on the page moves.
 			scrollWindowTo(0);
-			observer.tick();
+			tick(observer);
 
 			expect(observer.instances.get(element).offset).toBe(340);
 			expect(values().offset).toBe('340');
@@ -3996,13 +4206,13 @@ describe('offset and progress from the position', () => {
 			place(160, 760);
 			observer.register(element, { onScroll });
 			report();
-			observer.tick();
+			tick(observer);
 
 			// The page scrolls 100px down while content above the element
 			// shrinks 50px, so the element moves 150px up.
 			scrollWindowTo(100);
 			place(10, 610);
-			observer.tick();
+			tick(observer);
 
 			expect(observer.instances.get(element).offset).toBe(490);
 			expect(onScroll).toHaveBeenLastCalledWith(
@@ -4019,23 +4229,23 @@ describe('offset and progress from the position', () => {
 			place(520, 920);
 			observer.register(element, { onScroll });
 			report();
-			observer.tick();
+			tick(observer);
 			const instance = observer.instances.get(element);
 
 			scrollWindowTo(120);
 			place(400, 800);
-			observer.tick();
+			tick(observer);
 			expect(instance.progress).toBe(0.25);
 			expect(values()).toEqual({ offset: '100', progress: '0.25' });
 
 			scrollWindowTo(320);
 			place(200, 600);
-			observer.tick();
+			tick(observer);
 			expect(values()).toEqual({ offset: '300', progress: '0.75' });
 
 			scrollWindowTo(170);
 			place(350, 750);
-			observer.tick();
+			tick(observer);
 			expect(values()).toEqual({ offset: '150', progress: '0.375' });
 
 			expect(log).toEqual([
@@ -4050,14 +4260,14 @@ describe('offset and progress from the position', () => {
 			place(200, 800);
 			observer.register(element, { onScroll });
 			report();
-			observer.tick();
+			tick(observer);
 			const instance = observer.instances.get(element);
 			expect(instance.progress).toBe(0.5);
 
 			// The element grows to 1000px, then the page scrolls 100px.
 			scrollWindowTo(100);
 			place(100, 1100);
-			observer.tick();
+			tick(observer);
 
 			expect(instance.elementHeight).toBe(1000);
 			expect(instance.offset).toBe(400);
@@ -4067,7 +4277,7 @@ describe('offset and progress from the position', () => {
 			// Progress stays under 1 until the bottom edge reaches the line.
 			scrollWindowTo(699);
 			place(-499, 501);
-			observer.tick();
+			tick(observer);
 			expect(instance.state).toBe('active');
 			expect(instance.progress).toBeLessThan(1);
 		});
@@ -4078,11 +4288,11 @@ describe('offset and progress from the position', () => {
 			place(200, 800);
 			observer.register(element, { onScroll });
 			report();
-			observer.tick();
+			tick(observer);
 
 			scrollWindowTo(400);
 			place(-200, 400);
-			observer.tick();
+			tick(observer);
 
 			const instance = observer.instances.get(element);
 			expect(instance.state).toBe('passed');
@@ -4095,21 +4305,21 @@ describe('offset and progress from the position', () => {
 			place(200, 800);
 			observer.register(element, { onScroll });
 			report();
-			observer.tick();
+			tick(observer);
 
 			scrollWindowTo(400);
 			place(-200, 400);
-			observer.tick();
+			tick(observer);
 
 			// Back up onto the element, then on until it is below the line.
 			scrollWindowTo(0);
 			place(200, 800);
-			observer.tick();
+			tick(observer);
 			expect(values()).toEqual({ offset: '300', progress: '0.5' });
 
 			scrollWindowTo(-400);
 			place(600, 1200);
-			observer.tick();
+			tick(observer);
 
 			const instance = observer.instances.get(element);
 			expect(instance.state).toBe('inactive');
@@ -4124,23 +4334,23 @@ describe('offset and progress from the position', () => {
 			place(200, 800);
 			observer.register(element, { onScroll, onDeactivate });
 			report();
-			observer.tick();
+			tick(observer);
 			log = [];
 
 			// Down past the line.
 			scrollWindowTo(400);
 			place(-200, 400);
-			observer.tick();
+			tick(observer);
 			expect(log).toEqual(['onScroll 600 1', 'onDeactivate']);
 
 			// Up onto it, then back below it.
 			scrollWindowTo(100);
 			place(100, 700);
-			observer.tick();
+			tick(observer);
 			log = [];
 			scrollWindowTo(-300);
 			place(500.5, 1100.5);
-			observer.tick();
+			tick(observer);
 			expect(log).toEqual(['onScroll 0 0', 'onDeactivate']);
 		});
 
@@ -4190,7 +4400,7 @@ describe('offset and progress from the position', () => {
 				value: 1200,
 				configurable: true,
 			});
-			observer.handleResize();
+			resize();
 			vi.advanceTimersByTime(200);
 			vi.useRealTimers();
 
@@ -4218,11 +4428,12 @@ describe('elements that reach the line without a pass on it', () => {
 		);
 
 	// IO reports that the element is in the band around the line.
-	const near = (target) => observersOf(target)[0].trigger([{ isIntersecting: true }]);
+	const near = (target) =>
+		observersOf(target)[0].trigger([{ isIntersecting: true, target }]);
 
 	// IO reports which side of the line the element's top edge is on.
 	const edge = (target, topAboveLine) =>
-		observersOf(target)[1]?.trigger([{ isIntersecting: topAboveLine }]);
+		observersOf(target)[1]?.trigger([{ isIntersecting: topAboveLine, target }]);
 
 	const callbacks = (name) => ({
 		onActivate: () => log.push(`${name} onActivate`),
@@ -4258,11 +4469,11 @@ describe('elements that reach the line without a pass on it', () => {
 			place(element, 550, 950);
 			observer.register(element, { once: true, ...callbacks('a') });
 			near(element);
-			observer.tick();
+			tick(observer);
 
 			scrollWindowTo(100);
 			place(element, 450, 850);
-			observer.tick();
+			tick(observer);
 
 			expect(classes(element)).toEqual(['is-active']);
 			expect(values(element)).toEqual({ offset: '50', progress: '0.125' });
@@ -4274,7 +4485,7 @@ describe('elements that reach the line without a pass on it', () => {
 			// Back below the line, nothing changes, and the loop stops.
 			scrollWindowTo(0);
 			place(element, 550, 950);
-			observer.tick();
+			tick(observer);
 
 			expect(classes(element)).toEqual(['is-active']);
 			expect(log).toHaveLength(2);
@@ -4301,7 +4512,7 @@ describe('elements that reach the line without a pass on it', () => {
 			scrollWindowTo(2000);
 			place(element, -700, -300);
 			edge(element, true);
-			observer.tick();
+			tick(observer);
 
 			expect(classes(element)).toEqual(['is-active']);
 			expect(log).toEqual(['a onActivate', 'a onScroll 400 1']);
@@ -4313,12 +4524,12 @@ describe('elements that reach the line without a pass on it', () => {
 			place(element, 560, 600);
 			observer.register(element, { once: true, ...callbacks('a') });
 			near(element);
-			observer.tick();
+			tick(observer);
 
 			// One 100px frame takes it from below the line to above it.
 			scrollWindowTo(100);
 			place(element, 460, 500);
-			observer.tick();
+			tick(observer);
 
 			expect(classes(element)).toEqual(['is-active']);
 			expect(log).toEqual(['a onActivate', 'a onScroll 40 1']);
@@ -4333,7 +4544,7 @@ describe('elements that reach the line without a pass on it', () => {
 			place(element, 60, 100);
 			edge(element, true);
 			expect(observer.isActive()).toBe(true);
-			observer.tick();
+			tick(observer);
 
 			expect(classes(element)).toEqual(['is-active']);
 			expect(log).toEqual(['a onActivate', 'a onScroll 40 1']);
@@ -4368,7 +4579,7 @@ describe('elements that reach the line without a pass on it', () => {
 			// It is shown, past the line.
 			place(element, 60, 100);
 			edge(element, true);
-			observer.tick();
+			tick(observer);
 
 			expect(classes(element)).toEqual(['is-active']);
 			expect(log).toEqual(['a onActivate', 'a onScroll 40 1']);
@@ -4383,27 +4594,27 @@ describe('elements that reach the line without a pass on it', () => {
 			observer.register(other, { passedClass: 'is-done' });
 			near(element);
 			near(other);
-			observer.tick();
+			tick(observer);
 			expect(classes(element)).toEqual(['is-active']);
 
 			scrollWindowTo(400);
 			place(element, -200, 400);
 			place(other, -190, 410);
-			observer.tick();
+			tick(observer);
 			expect(classes(element)).toEqual(['is-passed']);
 			expect(classes(other)).toEqual(['is-done']);
 
 			scrollWindowTo(100);
 			place(element, 100, 700);
 			place(other, 110, 710);
-			observer.tick();
+			tick(observer);
 			expect(classes(element)).toEqual(['is-active']);
 			expect(classes(other)).toEqual(['is-active']);
 
 			scrollWindowTo(-200);
 			place(element, 600, 1200);
 			place(other, 610, 1210);
-			observer.tick();
+			tick(observer);
 			expect(classes(element)).toEqual([]);
 			expect(classes(other)).toEqual([]);
 		});
@@ -4447,11 +4658,11 @@ describe('elements that reach the line without a pass on it', () => {
 			place(element, 560, 600);
 			observer.register(element, callbacks('a'));
 			near(element);
-			observer.tick();
+			tick(observer);
 
 			scrollWindowTo(100);
 			place(element, 460, 500);
-			observer.tick();
+			tick(observer);
 
 			expect(log).toEqual(['a onActivate', 'a onScroll 40 1', 'a onDeactivate']);
 			expect(classes(element)).toEqual(['is-passed']);
@@ -4464,7 +4675,7 @@ describe('elements that reach the line without a pass on it', () => {
 			scrollWindowTo(2000);
 			place(element, -700, -300);
 			edge(element, true);
-			observer.tick();
+			tick(observer);
 
 			expect(log).toEqual(['a onActivate', 'a onScroll 400 1', 'a onDeactivate']);
 			expect(classes(element)).toEqual(['is-passed']);
@@ -4476,7 +4687,7 @@ describe('elements that reach the line without a pass on it', () => {
 
 			place(element, 60, 100);
 			edge(element, true);
-			observer.tick();
+			tick(observer);
 
 			expect(log).toEqual(['a onActivate', 'a onScroll 40 1', 'a onDeactivate']);
 		});
@@ -4490,7 +4701,7 @@ describe('elements that reach the line without a pass on it', () => {
 			scrollWindowTo(-1000);
 			place(element, 1100, 1400);
 			edge(element, false);
-			observer.tick();
+			tick(observer);
 
 			expect(log).toEqual(['a onActivate', 'a onScroll 0 0', 'a onDeactivate']);
 			expect(observer.instances.get(element).state).toBe('inactive');
@@ -4506,13 +4717,13 @@ describe('elements that reach the line without a pass on it', () => {
 			observer.register(other, { activateFrom: 'above', ...callbacks('above') });
 			near(element);
 			near(other);
-			observer.tick();
+			tick(observer);
 
 			// Down past both in one frame: only 'below' activates.
 			scrollWindowTo(100);
 			place(element, 460, 500);
 			place(other, 460, 500);
-			observer.tick();
+			tick(observer);
 
 			expect(log).toEqual(['below onActivate', 'below onScroll 40 1', 'below onDeactivate']);
 			expect(classes(element)).toEqual(['is-passed']);
@@ -4523,7 +4734,7 @@ describe('elements that reach the line without a pass on it', () => {
 			scrollWindowTo(0);
 			place(element, 560, 600);
 			place(other, 560, 600);
-			observer.tick();
+			tick(observer);
 
 			expect(log).toEqual(['above onActivate', 'above onScroll 0 0', 'above onDeactivate']);
 			expect(classes(element)).toEqual([]);
@@ -4543,7 +4754,7 @@ describe('elements that reach the line without a pass on it', () => {
 				value: 1200,
 				configurable: true,
 			});
-			observer.handleResize();
+			resize();
 			vi.advanceTimersByTime(200);
 			vi.useRealTimers();
 
@@ -4586,6 +4797,750 @@ describe('elements that reach the line without a pass on it', () => {
 			edge(element, true);
 			expect(observer.isActive()).toBe(true);
 			expect(observer.reportedInstances.size).toBe(1);
+		});
+	});
+});
+
+describe('one loop and shared IntersectionObservers for every LineObserver', () => {
+	let first;
+	let second;
+	let a;
+	let b;
+	let log;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	// The IntersectionObservers watching an element, near one first.
+	const observersOf = (target) =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(target)
+		);
+
+	// Logs every rect read and every class, style and callback write.
+	const watch = (element, rects) => {
+		element.getBoundingClientRect = () => {
+			log.push(`read rect ${element.id}`);
+			return rects[element.id];
+		};
+		for (const method of ['add', 'remove']) {
+			const original = element.classList[method].bind(element.classList);
+			element.classList[method] = (...args) => {
+				log.push(`write class ${element.id}`);
+				return original(...args);
+			};
+		}
+		const setProperty = element.style.setProperty.bind(element.style);
+		element.style.setProperty = (...args) => {
+			log.push(`write style ${element.id}`);
+			return setProperty(...args);
+		};
+	};
+
+	const readsAfterFirstWrite = () => {
+		const start = log.findIndex((entry) => entry.startsWith('write'));
+		return log.slice(start).filter((entry) => entry.startsWith('read'));
+	};
+
+	const report = (observer, element) =>
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(element)
+		);
+
+	beforeEach(() => {
+		// The first observer's line is at 500, the second's at 300.
+		first = new LineObserver({ triggerLine: '50vh' });
+		second = new LineObserver({ triggerLine: '30vh' });
+		a = document.createElement('div');
+		b = document.createElement('div');
+		a.id = 'a';
+		b.id = 'b';
+		document.body.append(a, b);
+		log = [];
+	});
+
+	afterEach(() => {
+		a.remove();
+		b.remove();
+	});
+
+	describe('the loop', () => {
+		it('should request one frame for every running observer', () => {
+			place(a, 600, 900);
+			place(b, 400, 700);
+			first.register(a);
+			second.register(b);
+			window.requestAnimationFrame.mockClear();
+
+			report(first, a);
+			report(second, b);
+			expect(first.isActive()).toBe(true);
+			expect(second.isActive()).toBe(true);
+			expect(window.requestAnimationFrame).toHaveBeenCalledTimes(1);
+
+			frame();
+			expect(window.requestAnimationFrame).toHaveBeenCalledTimes(2);
+		});
+
+		it("should run every observer's reads before any observer's writes", () => {
+			const rects = {
+				a: { top: 550, bottom: 850 }, // near the first line
+				b: { top: 350, bottom: 650 }, // near the second line
+			};
+			watch(a, rects);
+			watch(b, rects);
+			first.register(a, { onActivate: () => log.push('write onActivate a') });
+			second.register(b, { onActivate: () => log.push('write onActivate b') });
+			report(first, a);
+			report(second, b);
+			frame();
+
+			// A 100px scroll takes each element across its own line.
+			scrollWindowTo(100);
+			rects.a = { top: 450, bottom: 750 };
+			rects.b = { top: 250, bottom: 550 };
+			log = [];
+			frame();
+
+			expect(first.instances.get(a).state).toBe('active');
+			expect(second.instances.get(b).state).toBe('active');
+			expect(log).toContain('read rect b');
+			expect(log).toContain('write onActivate a');
+			expect(readsAfterFirstWrite()).toEqual([]);
+		});
+
+		it('should keep a running observer in the loop when another stops or is destroyed', () => {
+			place(a, 400, 700);
+			place(b, 200, 500);
+			first.register(a);
+			second.register(b);
+
+			// `first` rests and stops. `second` gets a report and keeps going.
+			frame();
+			report(second, b);
+			frame();
+			expect(first.isActive()).toBe(false);
+			expect(second.isActive()).toBe(true);
+
+			// `first` is destroyed. `second` still runs and still moves.
+			first.destroy();
+			expect(pendingFrames.size).toBe(1);
+			scrollWindowTo(50);
+			place(b, 150, 450);
+			frame();
+
+			expect(second.instances.get(b).offset).toBe(150);
+			expect(second.isActive()).toBe(true);
+		});
+
+		it('should cancel the frame when the last running observer is destroyed', () => {
+			place(a, 600, 900);
+			first.register(a);
+			report(first, a);
+			expect(pendingFrames.size).toBe(1);
+
+			first.destroy();
+
+			expect(pendingFrames.size).toBe(0);
+			expect(second.isActive()).toBe(false);
+		});
+
+		it("should finish another observer's writes when a callback throws", () => {
+			vi.spyOn(console, 'error').mockImplementation(() => {});
+			const onActivate = vi.fn();
+
+			place(a, 550, 850);
+			place(b, 350, 650);
+			first.register(a, {
+				onActivate: () => {
+					throw new Error('callback failed');
+				},
+			});
+			second.register(b, { onActivate });
+			report(first, a);
+			report(second, b);
+			frame();
+
+			scrollWindowTo(100);
+			place(a, 450, 750);
+			place(b, 250, 550);
+			frame();
+
+			expect(a.classList.contains('is-active')).toBe(true);
+			expect(onActivate).toHaveBeenCalledTimes(1);
+			expect(b.classList.contains('is-active')).toBe(true);
+			expect(first.isActive()).toBe(true);
+			expect(second.isActive()).toBe(true);
+		});
+	});
+
+	describe('the listeners', () => {
+		it('should add one scroll listener and one resize listener for the page', () => {
+			first.destroy();
+			second.destroy();
+			const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+			const added = (type) =>
+				addEventListenerSpy.mock.calls.filter(([name]) => name === type);
+
+			[1, 2, 3].forEach(() => new LineObserver());
+
+			expect(added('scroll')).toHaveLength(1);
+			expect(added('resize')).toHaveLength(1);
+			expect(added('scroll')[0][2]).toEqual({ passive: true });
+		});
+
+		it('should keep the listeners until the last observer is destroyed', () => {
+			const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+
+			first.destroy();
+			expect(removeEventListenerSpy).not.toHaveBeenCalled();
+
+			// `second` still follows the direction.
+			scrollWindowTo(200);
+			scrollWindowTo(100);
+			expect(second.getDirection()).toBe('up');
+
+			second.destroy();
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('scroll', expect.any(Function));
+			expect(removeEventListenerSpy).toHaveBeenCalledWith('resize', expect.any(Function));
+		});
+
+		it("should run every observer's resize reads before any observer's writes", () => {
+			vi.useFakeTimers();
+			const rects = {
+				a: { top: 600, bottom: 900 },
+				b: { top: 400, bottom: 700 },
+			};
+			watch(a, rects);
+			watch(b, rects);
+			first.register(a, { onActivate: () => log.push('write onActivate a') });
+			second.register(b, { onActivate: () => log.push('write onActivate b') });
+
+			// A taller viewport moves the lines to 700 and 420, across both.
+			Object.defineProperty(window, 'innerHeight', {
+				value: 1400,
+				configurable: true,
+			});
+			log = [];
+			resize();
+			vi.advanceTimersByTime(200);
+			vi.useRealTimers();
+
+			expect(first.instances.get(a).state).toBe('active');
+			expect(second.instances.get(b).state).toBe('active');
+			expect(readsAfterFirstWrite()).toEqual([]);
+		});
+
+		it('should run the resize pass for the observers left after one is destroyed', () => {
+			vi.useFakeTimers();
+			place(a, 600, 900);
+			place(b, 400, 700);
+			first.register(a);
+			second.register(b);
+
+			Object.defineProperty(window, 'innerHeight', {
+				value: 1400,
+				configurable: true,
+			});
+			resize();
+			first.destroy();
+			vi.advanceTimersByTime(200);
+			vi.useRealTimers();
+
+			expect(first.viewportHeight).toBe(1000);
+			expect(second.viewportHeight).toBe(1400);
+			expect(second.instances.get(b).state).toBe('active');
+		});
+	});
+
+	describe('IntersectionObservers', () => {
+		it('should create one near and one edge observer for elements that share a rootMargin', () => {
+			const c = document.createElement('div');
+			document.body.append(c);
+			place(a, 1300, 1600);
+			place(b, 1400, 1700);
+			place(c, 1500, 1800);
+
+			first.register(a);
+			first.register(b);
+			expect(MockIntersectionObserver.instances).toHaveLength(2);
+
+			// Another line needs its own pair.
+			first.register(c, { triggerLine: '20vh' });
+			expect(MockIntersectionObserver.instances).toHaveLength(4);
+
+			const [near, edge] = observersOf(a);
+			expect(near.observedElements).toEqual([a, b]);
+			expect(edge.observedElements).toEqual([a, b]);
+			expect(near.options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect(edge.options.rootMargin).toBe('10000000px 0px -500px 0px');
+
+			c.remove();
+		});
+
+		it('should take each entry in a report to its own element', () => {
+			place(a, 1300, 1600);
+			place(b, 1400, 1700);
+			first.register(a);
+			first.register(b);
+			const [near, edge] = observersOf(a);
+			const nearElements = () =>
+				[...first.nearInstances].map((instance) => instance.element);
+
+			near.trigger([
+				{ isIntersecting: true, target: a },
+				{ isIntersecting: true, target: b },
+			]);
+			expect(nearElements()).toEqual([a, b]);
+
+			// The last entry for an element counts.
+			near.trigger([
+				{ isIntersecting: false, target: b },
+				{ isIntersecting: false, target: a },
+				{ isIntersecting: true, target: b },
+			]);
+			expect(nearElements()).toEqual([b]);
+
+			// An entry for an element the observer does not hold asks for
+			// nothing.
+			first.reportedInstances.clear();
+			edge.trigger([{ isIntersecting: true, target: document.body }]);
+			expect(first.reportedInstances.size).toBe(0);
+		});
+
+		it('should keep a shared observer for the other elements when one is unregistered', () => {
+			place(a, 1300, 1600);
+			place(b, 1400, 1700);
+			first.register(a);
+			first.register(b);
+			const [near, edge] = observersOf(a);
+			const disconnect = vi.spyOn(near, 'disconnect');
+
+			first.unregister(a);
+			expect(near.observedElements).toEqual([b]);
+			expect(edge.observedElements).toEqual([b]);
+			expect(disconnect).not.toHaveBeenCalled();
+
+			// A late entry for `a` asks for nothing.
+			near.trigger([{ isIntersecting: true, target: a }]);
+			expect(first.nearInstances.size).toBe(0);
+
+			first.unregister(b);
+			expect(disconnect).toHaveBeenCalled();
+		});
+
+		it('should give each observer its own IntersectionObservers for an element both register', () => {
+			// Both observers have the line at 500.
+			const third = new LineObserver({ triggerLine: '50vh' });
+			place(a, 1300, 1600);
+			first.register(a);
+			third.register(a);
+
+			const [firstNear, , thirdNear] = observersOf(a);
+			expect(observersOf(a)).toHaveLength(4);
+			expect(firstNear.options.rootMargin).toBe(thirdNear.options.rootMargin);
+
+			// `third` still observes it after `first` lets it go.
+			first.unregister(a);
+			expect(observersOf(a)).toEqual(MockIntersectionObserver.instances.slice(2));
+			thirdNear.trigger([{ isIntersecting: true, target: a }]);
+			expect(third.nearInstances.size).toBe(1);
+		});
+	});
+});
+
+describe('a resize', () => {
+	let observer;
+	let a;
+	let b;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	const setSize = (width, height) => {
+		Object.defineProperty(window, 'innerWidth', {
+			value: width,
+			configurable: true,
+		});
+		Object.defineProperty(window, 'innerHeight', {
+			value: height,
+			configurable: true,
+		});
+	};
+
+	// Fires a resize and lets its debounced pass run.
+	const resizeTo = (width, height) => {
+		setSize(width, height);
+		resize();
+		vi.advanceTimersByTime(200);
+	};
+
+	// The IntersectionObservers watching an element, near one first.
+	const observersOf = (target) =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(target)
+		);
+
+	const report = (element) =>
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(element)
+		);
+
+	beforeEach(() => {
+		// Frames still come from the queue.
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		// The line is at 500 on the 1920x1000 viewport.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		a = document.createElement('div');
+		b = document.createElement('div');
+		document.body.append(a, b);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		a.remove();
+		b.remove();
+	});
+
+	describe('that leaves the lines where they were', () => {
+		it('should do nothing when the size has not changed', () => {
+			place(a, 400, 700);
+			place(b, 1300, 1600);
+			observer.register(a);
+			observer.register(b);
+			const created = MockIntersectionObserver.instances.length;
+			a.getBoundingClientRect.mockClear();
+			b.getBoundingClientRect.mockClear();
+
+			resizeTo(1920, 1000);
+
+			expect(MockIntersectionObserver.instances).toHaveLength(created);
+			expect(a.getBoundingClientRect).not.toHaveBeenCalled();
+			expect(b.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it('should build no IntersectionObservers on a width-only resize', () => {
+			place(a, 400, 700);
+			place(b, 1300, 1600);
+			observer.register(a);
+			observer.register(b, { triggerLine: '200px' });
+			const before = [...observersOf(a), ...observersOf(b)];
+			const created = MockIntersectionObserver.instances.length;
+			b.getBoundingClientRect.mockClear();
+
+			resizeTo(1200, 1000);
+
+			expect(MockIntersectionObserver.instances).toHaveLength(created);
+			expect([...observersOf(a), ...observersOf(b)]).toEqual(before);
+			expect(observer.viewportWidth).toBe(1200);
+
+			// `b` is not active and its line did not move, so it is not read.
+			expect(b.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it("should read an active element, whose height a reflow can change", () => {
+			const onScroll = vi.fn();
+			place(a, 300, 700);
+			observer.register(a, { onScroll });
+			expect(observer.instances.get(a).progress).toBe(0.5);
+
+			// The narrower page wraps more lines, and `a` grows to 800px.
+			place(a, 300, 1100);
+			resizeTo(1200, 1000);
+
+			expect(observer.instances.get(a).progress).toBe(0.25);
+			expect(onScroll).toHaveBeenLastCalledWith(200, a, observer.instances.get(a));
+		});
+
+		it('should give a px line new rootMargins on a height change, and read no inactive element', () => {
+			place(a, 1300, 1600);
+			observer.register(a, { triggerLine: '200px' });
+			const [near, edge] = observersOf(a);
+			expect(edge.options.rootMargin).toBe('10000000px 0px -800px 0px');
+			a.getBoundingClientRect.mockClear();
+
+			resizeTo(1920, 800);
+
+			const [newNear, newEdge] = observersOf(a);
+			expect(newNear).not.toBe(near);
+			expect(newEdge.options.rootMargin).toBe('10000000px 0px -600px 0px');
+			expect(observer.instances.get(a).triggerLinePx).toBe(200);
+			expect(a.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it("should move only a vw line's elements on a width-only resize", () => {
+			place(a, 450, 700);
+			place(b, 1300, 1600);
+			observer.register(a, { triggerLine: '25vw' });
+			observer.register(b);
+			expect(observer.instances.get(a).state).toBe('active');
+			const bObservers = observersOf(b);
+			const created = MockIntersectionObserver.instances.length;
+
+			// The line moves from 480 to 400, above `a`.
+			resizeTo(1600, 1000);
+
+			expect(MockIntersectionObserver.instances).toHaveLength(created + 2);
+			expect(observersOf(b)).toEqual(bObservers);
+			expect(observer.instances.get(a).triggerLinePx).toBe(400);
+			expect(observer.instances.get(a).state).toBe('inactive');
+		});
+	});
+
+	describe('with activateFrom', () => {
+		it("should keep an element 'below' holds active held when the line moves away from it", () => {
+			const onDeactivate = vi.fn();
+
+			// Down onto `a`, then up until it is below the line. 'below'
+			// holds it active.
+			place(a, 520, 820);
+			observer.register(a, { activateFrom: 'below', onDeactivate });
+			report(a);
+			tick(observer);
+			scrollWindowTo(100);
+			place(a, 420, 720);
+			tick(observer);
+			scrollWindowTo(0);
+			place(a, 520, 820);
+			tick(observer);
+			expect(observer.instances.get(a).state).toBe('active');
+			expect(observer.getDirection()).toBe('up');
+
+			// The toolbar shows, then hides, twice. The line moves 500, 420,
+			// 500, 420, 500.
+			for (const height of [840, 1000, 840, 1000]) {
+				resizeTo(1920, height);
+			}
+
+			expect(observer.instances.get(a).state).toBe('active');
+			expect(onDeactivate).not.toHaveBeenCalled();
+		});
+
+		it("should keep an element 'above' holds active past the line held", () => {
+			const onDeactivate = vi.fn();
+
+			// `a` is past the line at register(). Up onto it, then down
+			// until it is past the line again.
+			scrollWindowTo(1000);
+			place(a, 100, 400);
+			observer.register(a, { activateFrom: 'above', onDeactivate });
+			onDeactivate.mockClear();
+			report(a);
+			tick(observer);
+			scrollWindowTo(900);
+			place(a, 200, 600);
+			tick(observer);
+			expect(observer.instances.get(a).state).toBe('active');
+			scrollWindowTo(1000);
+			place(a, 100, 400);
+			tick(observer);
+			expect(observer.instances.get(a).state).toBe('active');
+
+			// A shorter viewport moves the line up to 420, still below `a`.
+			resizeTo(1920, 840);
+
+			expect(observer.instances.get(a).state).toBe('active');
+			expect(onDeactivate).not.toHaveBeenCalled();
+		});
+
+		it("should not activate a 'below' element the line moves onto after a scroll up", () => {
+			const onActivate = vi.fn();
+
+			scrollWindowTo(200);
+			scrollWindowTo(100);
+			place(a, 520, 820);
+			observer.register(a, { activateFrom: 'below', onActivate });
+
+			// A taller viewport moves the line down to 550, across `a`.
+			resizeTo(1920, 1100);
+
+			expect(observer.instances.get(a).state).toBe('inactive');
+			expect(onActivate).not.toHaveBeenCalled();
+		});
+	});
+});
+
+describe('option values', () => {
+	let observer;
+	let element;
+	let warn;
+
+	const place = (top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	// The IntersectionObservers watching the element, near one first.
+	const observersOf = (target) =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(target)
+		);
+
+	const warnings = () => warn.mock.calls.map(([message]) => message);
+
+	beforeEach(() => {
+		warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		// The line is at 500 on the 1000px viewport.
+		observer = new LineObserver();
+		element = document.createElement('div');
+		document.body.append(element);
+		place(1300, 1600);
+	});
+
+	afterEach(() => {
+		element.remove();
+	});
+
+	describe('from data attributes, as strings', () => {
+		it('should take a nearMargin of digits as a number', () => {
+			observer.register(element, { nearMargin: '100' });
+
+			expect(observer.instances.get(element).options.nearMargin).toBe(100);
+			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect(warnings()).toEqual([]);
+		});
+
+		it('should take a triggerLine with no unit as px', () => {
+			const other = document.createElement('div');
+			document.body.append(other);
+			other.getBoundingClientRect = vi.fn().mockReturnValue({ top: 1300, bottom: 1600 });
+
+			observer.register(element, { triggerLine: '200' });
+			observer.register(other, { triggerLine: '0' });
+
+			expect(observer.instances.get(element).triggerLinePx).toBe(200);
+			expect(observer.instances.get(other).triggerLinePx).toBe(0);
+			expect(observer.parseTriggerLine('12.5')).toBe(12.5);
+			expect(warnings()).toEqual([]);
+
+			other.remove();
+		});
+
+		it('should keep the defaults for options that are undefined, as from a missing attribute', () => {
+			const dataset = {};
+
+			place(400, 700);
+			expect(() =>
+				observer.register(element, {
+					triggerLine: dataset.triggerLine,
+					nearMargin: dataset.nearMargin,
+					activeClass: dataset.activeClass,
+					passedClass: dataset.passedClass,
+					activateFrom: dataset.activateFrom,
+				})
+			).not.toThrow();
+
+			const { options, triggerLinePx } = observer.instances.get(element);
+			expect(options.nearMargin).toBe(100);
+			expect(triggerLinePx).toBe(500);
+			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect([...element.classList]).toEqual(['is-active']);
+			expect(warnings()).toEqual([]);
+		});
+
+		it('should keep the defaults for constructor options that are undefined', () => {
+			const custom = new LineObserver({
+				triggerLine: undefined,
+				activeClass: undefined,
+				nearMargin: undefined,
+			});
+
+			expect(custom.defaults.triggerLine).toBe('50vh');
+			expect(custom.defaults.activeClass).toBe('is-active');
+			expect(custom.defaults.nearMargin).toBe(100);
+		});
+	});
+
+	describe('that are invalid', () => {
+		it.each([
+			['NaN', NaN],
+			['Infinity', Infinity],
+			['-10', -10],
+			['-10px', '-10px'],
+			['1.2.3vh', '1.2.3vh'],
+			['50 vh', '50 vh'],
+			['', ''],
+		])('should warn once and use the default for a triggerLine of %s', (label, triggerLine) => {
+			expect(() => observer.register(element, { triggerLine })).not.toThrow();
+
+			expect(observer.instances.get(element).triggerLinePx).toBe(500);
+			expect(warnings()).toEqual([
+				`LineObserver: Invalid trigger line format "${triggerLine}", defaulting to 50vh`,
+			]);
+		});
+
+		it.each([
+			['-50', -50],
+			['NaN', NaN],
+			['Infinity', Infinity],
+			['null', null],
+			['abc', 'abc'],
+			['1e2', '1e2'],
+			['an empty string', ''],
+		])('should warn once and use the default for a nearMargin of %s', (label, nearMargin) => {
+			expect(() => observer.register(element, { nearMargin })).not.toThrow();
+
+			expect(observer.instances.get(element).options.nearMargin).toBe(100);
+			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect(warnings()).toEqual([
+				`LineObserver: Invalid nearMargin "${nearMargin}", defaulting to 100`,
+			]);
+		});
+
+		it.each([
+			['activeClass', '', 'is-active'],
+			['activeClass', 'is on', 'is-active'],
+			['activeClass', null, 'is-active'],
+			['passedClass', '', 'is-passed'],
+			['passedClass', 7, 'is-passed'],
+		])('should warn once and use the default for %s "%s"', (key, value, fallback) => {
+			// Past the line, so register() adds both classes in turn.
+			place(100, 400);
+
+			expect(() => observer.register(element, { [key]: value })).not.toThrow();
+
+			expect(observer.instances.get(element).options[key]).toBe(fallback);
+			expect(warnings()).toEqual([
+				`LineObserver: Invalid ${key} "${value}", defaulting to "${fallback}"`,
+			]);
+		});
+
+		it("should fall back to the observer's default, not the built-in one", () => {
+			const custom = new LineObserver({ nearMargin: 50, triggerLine: '30vh' });
+
+			custom.register(element, { nearMargin: 'wide', triggerLine: 'high' });
+
+			const { options, triggerLinePx } = custom.instances.get(element);
+			expect(options.nearMargin).toBe(50);
+			expect(triggerLinePx).toBe(300);
+		});
+
+		it('should warn once for an invalid constructor option, not once for each element', () => {
+			const other = document.createElement('div');
+			document.body.append(other);
+			other.getBoundingClientRect = vi.fn().mockReturnValue({ top: 1300, bottom: 1600 });
+
+			const custom = new LineObserver({ nearMargin: '-1', activeClass: '' });
+			custom.register(element);
+			custom.register(other);
+
+			expect(custom.defaults.nearMargin).toBe(100);
+			expect(custom.defaults.activeClass).toBe('is-active');
+			expect(warnings()).toEqual([
+				'LineObserver: Invalid nearMargin "-1", defaulting to 100',
+				'LineObserver: Invalid activeClass "", defaulting to "is-active"',
+			]);
+
+			other.remove();
+		});
+
+		it('should still take null in place of options', () => {
+			expect(() => new LineObserver(null)).not.toThrow();
+			expect(() => observer.register(element, null)).not.toThrow();
+			expect(observer.instances.get(element).options.triggerLine).toBe('50vh');
 		});
 	});
 });

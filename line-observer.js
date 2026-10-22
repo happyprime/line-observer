@@ -5,8 +5,8 @@
  * when elements cross a configurable "trigger line" in the viewport.
  *
  * Features:
- * - Single shared RAF loop (stops when the page is still)
- * - Batched DOM read/write operations
+ * - One RAF loop for every instance on the page (stops when the page is still)
+ * - Batched DOM read/write operations, across instances
  * - Configurable trigger line per instance (px, %, vh, vw)
  * - Configurable scroll direction behavior
  * - Bidirectional scroll support with consistent offset values
@@ -32,17 +32,205 @@
 // than one, so a scroll that skips a frame does not stop and restart it.
 const STILL_FRAMES = 2;
 
+// A move must be more than 1px, and more than this many device pixels, to
+// change the direction. Firefox can scroll to an anchor at a fractional
+// position in two steps, one device pixel apart: 1px at 100% zoom, 1.25px at
+// 80%. With rounding, the step can be a little more than one device pixel.
+const DIRECTION_DEVICE_PIXELS = 1.5;
+
 // How far above the viewport the edge observer's root reaches, in px. An
 // element higher than this reads as below the line to that observer.
 // Chromium clamps a larger margin to 33,554,432px.
 const EDGE_REACH = 10000000;
+
+// A number with an optional unit. No unit means px.
+const TRIGGER_LINE = /^(\d+(?:\.\d+)?|\.\d+)(px|%|vh|vw)?$/;
+
+// A number with no unit.
+const DIGITS = /^(\d+(?:\.\d+)?|\.\d+)$/;
+
+/**
+ * Returns whether a value is a trigger line LineObserver can parse.
+ *
+ * @param {*} value - The value.
+ * @return {boolean} True for a finite number of 0 or more, or a string `TRIGGER_LINE` matches.
+ */
+const isTriggerLine = (value) =>
+	(typeof value === 'number' && Number.isFinite(value) && value >= 0) ||
+	(typeof value === 'string' && TRIGGER_LINE.test(value));
+
+/**
+ * Returns a number, or a string of digits as a number, or NaN.
+ *
+ * @param {*} value - The value.
+ * @return {number} The number.
+ */
+const toNumber = (value) => {
+	if (typeof value === 'number') {
+		return value;
+	}
+	if (typeof value === 'string' && DIGITS.test(value)) {
+		return Number(value);
+	}
+	return NaN;
+};
+
+/**
+ * Runs one RAF loop, one scroll listener and one resize listener for every LineObserver.
+ *
+ * Each frame runs every observer's reads, then every observer's writes, so
+ * no observer reads the page after another has written to it. Such a read
+ * makes the browser recalculate styles and layout in the middle of the frame.
+ *
+ * @private
+ */
+class Scheduler {
+	/**
+	 * Creates the scheduler. It touches `window` only when an observer joins.
+	 */
+	constructor() {
+		this.observers = new Set();
+		this.rafId = null;
+		this.resizeTimeout = null;
+
+		this.frame = this.frame.bind(this);
+		this.handleScroll = this.handleScroll.bind(this);
+		this.handleResize = this.handleResize.bind(this);
+	}
+
+	/**
+	 * Adds an observer, and the listeners if it is the first.
+	 *
+	 * @param {LineObserver} observer - The observer.
+	 */
+	add(observer) {
+		if (this.observers.size === 0) {
+			window.addEventListener('scroll', this.handleScroll, {
+				passive: true,
+			});
+			window.addEventListener('resize', this.handleResize, {
+				passive: true,
+			});
+		}
+
+		this.observers.add(observer);
+	}
+
+	/**
+	 * Removes an observer, and the listeners if it is the last.
+	 *
+	 * @param {LineObserver} observer - The observer.
+	 */
+	remove(observer) {
+		this.observers.delete(observer);
+
+		if (this.rafId !== null && !this.anyRunning()) {
+			cancelAnimationFrame(this.rafId);
+			this.rafId = null;
+		}
+
+		if (this.observers.size === 0) {
+			clearTimeout(this.resizeTimeout);
+			this.resizeTimeout = null;
+			window.removeEventListener('scroll', this.handleScroll);
+			window.removeEventListener('resize', this.handleResize);
+		}
+	}
+
+	/**
+	 * Returns whether any observer's loop is running.
+	 *
+	 * @return {boolean} True if the next frame has work.
+	 */
+	anyRunning() {
+		for (const observer of this.observers) {
+			if (observer.isRunning) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * Requests the next frame, unless one is already requested.
+	 */
+	request() {
+		if (this.rafId === null) {
+			this.rafId = requestAnimationFrame(this.frame);
+		}
+	}
+
+	/**
+	 * Runs every running observer's reads, then their writes, and requests the next frame while any still runs.
+	 */
+	frame() {
+		this.rafId = null;
+
+		const scrollY = window.scrollY;
+		const passes = [];
+
+		for (const observer of this.observers) {
+			if (observer.isRunning) {
+				const changes = observer._readFrame(scrollY);
+				if (changes) {
+					passes.push([observer, changes]);
+				}
+			}
+		}
+
+		for (const [observer, changes] of passes) {
+			observer._apply(changes);
+		}
+
+		// A callback can start, stop or destroy any observer.
+		if (this.anyRunning()) {
+			this.request();
+		}
+	}
+
+	/**
+	 * Gives every observer the new scroll position.
+	 *
+	 * The loop stops when the page is still or nothing is near the line,
+	 * and the page can move several times before it starts again. Each move
+	 * sets the direction, not the net move since the loop stopped.
+	 */
+	handleScroll() {
+		const scrollY = window.scrollY;
+
+		for (const observer of this.observers) {
+			observer.trackDirection(scrollY);
+		}
+	}
+
+	/**
+	 * Runs every observer's resize reads, then their writes, 150ms after the last resize event.
+	 */
+	handleResize() {
+		clearTimeout(this.resizeTimeout);
+		this.resizeTimeout = setTimeout(() => {
+			this.resizeTimeout = null;
+
+			const passes = [...this.observers].map((observer) => [
+				observer,
+				observer._readResize(),
+			]);
+
+			for (const [observer, changes] of passes) {
+				observer._apply(changes);
+			}
+		}, 150);
+	}
+}
+
+const scheduler = new Scheduler();
 
 class LineObserver {
 	/**
 	 * Create a new LineObserver instance
 	 *
 	 * @param {Object}        options                     - Global default options
-	 * @param {string|number} [options.triggerLine]       - Position of trigger line (px, %, vh, vw)
+	 * @param {string|number} [options.triggerLine]       - Position of trigger line (px, %, vh, vw, or no unit for px)
 	 * @param {string}        [options.activeClass]       - Class added when element is active
 	 * @param {string}        [options.passedClass]       - Class present while element is past the line
 	 * @param {boolean}       [options.once]              - Activate the element once, then stop observing it
@@ -51,7 +239,7 @@ class LineObserver {
 	 *                                                    'below' (element rises from below the line, scrolling down),
 	 *                                                    'above' (element drops from above the line, scrolling up),
 	 *                                                    or 'both' (default)
-	 * @param {number}        [options.nearMargin]        - IO band half-width in px (default: 100). Larger values
+	 * @param {number|string} [options.nearMargin]        - IO band half-width in px (default: 100). Larger values
 	 *                                                    detect elements earlier; smaller values are more efficient.
 	 * @param {boolean}       [options.cssCustomProperty] - Set --scroll-offset and --scroll-progress (default: true)
 	 * @param {Function}      [options.onActivate]        - Callback when element becomes active
@@ -60,7 +248,7 @@ class LineObserver {
 	 *                                                    once with the value it holds when it leaves
 	 */
 	constructor(options = {}) {
-		this.defaults = {
+		const defaults = {
 			triggerLine: '50vh',
 			activeClass: 'is-active',
 			passedClass: 'is-passed',
@@ -75,21 +263,28 @@ class LineObserver {
 
 		this.destroyed = false;
 
-		this.defaults = { ...this.defaults, ...options };
+		this.defaults = {
+			...defaults,
+			...this._checkOptions(options, defaults),
+		};
 
 		// Instance tracking
 		this.instances = new Map();
 		this.activeInstances = new Set();
 		this.nearInstances = new Set();
 
-		// RAF state
+		// IntersectionObservers by rootMargin. Elements with the same
+		// rootMargin share one.
+		this.nearObservers = new Map();
+		this.edgeObservers = new Map();
+
+		// Loop state. The loop itself belongs to the scheduler.
 		this.isRunning = false;
-		this.rafId = null;
 		this.lastScrollY = window.scrollY;
 		this.currentDirection = 'down';
 		this.stillFrames = 0;
 
-		// The scroll position trackDirection() last saw.
+		// The scroll position trackDirection() measures the next move from.
 		this.directionScrollY = window.scrollY;
 
 		// Instances IO has reported since the last pass. IO reports in the
@@ -97,49 +292,33 @@ class LineObserver {
 		// these elements still need a pass.
 		this.reportedInstances = new Set();
 
-		// Bind methods
-		this.tick = this.tick.bind(this);
-		this.handleResize = this.handleResize.bind(this);
-		this.trackDirection = this.trackDirection.bind(this);
-
-		// Resize handling (debounced)
-		this.resizeTimeout = null;
-		window.addEventListener('resize', this.handleResize, { passive: true });
-
-		// The loop stops when the page is still or nothing is near the
-		// line, and the page can move several times before it starts
-		// again. Each move sets the direction, not the net move since the
-		// loop stopped.
-		window.addEventListener('scroll', this.trackDirection, {
-			passive: true,
-		});
-
 		// Cache viewport dimensions
 		this.viewportHeight = window.innerHeight;
 		this.viewportWidth = window.innerWidth;
+
+		scheduler.add(this);
 	}
 
 	/**
 	 * Parse trigger line value to pixels
 	 *
-	 * @param {string|number} value - Trigger line value (px, %, vh, vw)
+	 * @param {string|number} value - Trigger line value (px, %, vh, vw, or no unit for px)
 	 * @return {number}              Pixel value
 	 */
 	parseTriggerLine(value) {
-		if (typeof value === 'number') {
-			return value;
-		}
-
-		const match = String(value).match(/^([\d.]+)(px|%|vh|vw)$/);
-		if (!match) {
+		if (!isTriggerLine(value)) {
 			console.warn(
 				`LineObserver: Invalid trigger line format "${value}", defaulting to 50vh`
 			);
 			return this.viewportHeight * 0.5;
 		}
 
-		const num = parseFloat(match[1]);
-		const unit = match[2];
+		if (typeof value === 'number') {
+			return value;
+		}
+
+		const [, digits, unit = 'px'] = value.match(TRIGGER_LINE);
+		const num = Number(digits);
 
 		const unitHandlers = {
 			px: num,
@@ -149,6 +328,82 @@ class LineObserver {
 		};
 
 		return unitHandlers[unit];
+	}
+
+	/**
+	 * Returns the options without `undefined` values, and with each invalid value replaced by its default and one warning.
+	 *
+	 * Options often come from data attributes, as strings. A string of
+	 * digits is a number: `nearMargin: '100'` is 100, and a `triggerLine` of
+	 * `'200'` is 200px. An `undefined` value, as from a missing attribute,
+	 * leaves the default in place.
+	 *
+	 * @param {Object} options  - The options given.
+	 * @param {Object} defaults - The values to fall back on.
+	 * @return {Object} The options to merge over `defaults`.
+	 * @private
+	 */
+	_checkOptions(options, defaults) {
+		const checked = {};
+
+		for (const [key, value] of Object.entries(options || {})) {
+			if (value !== undefined) {
+				checked[key] = value;
+			}
+		}
+
+		const fallBack = (key, message) => {
+			console.warn(`LineObserver: ${message}`);
+			checked[key] = defaults[key];
+		};
+
+		if ('triggerLine' in checked && !isTriggerLine(checked.triggerLine)) {
+			fallBack(
+				'triggerLine',
+				`Invalid trigger line format "${checked.triggerLine}", defaulting to ${defaults.triggerLine}`
+			);
+		}
+
+		if ('nearMargin' in checked) {
+			const margin = toNumber(checked.nearMargin);
+
+			if (Number.isFinite(margin) && margin >= 0) {
+				checked.nearMargin = margin;
+			} else {
+				fallBack(
+					'nearMargin',
+					`Invalid nearMargin "${checked.nearMargin}", defaulting to ${defaults.nearMargin}`
+				);
+			}
+		}
+
+		// classList.add() throws on an empty string or one with a space.
+		for (const key of ['activeClass', 'passedClass']) {
+			if (
+				key in checked &&
+				!(
+					typeof checked[key] === 'string' &&
+					/^\S+$/.test(checked[key])
+				)
+			) {
+				fallBack(
+					key,
+					`Invalid ${key} "${checked[key]}", defaulting to "${defaults[key]}"`
+				);
+			}
+		}
+
+		if (
+			'activateFrom' in checked &&
+			!['both', 'below', 'above'].includes(checked.activateFrom)
+		) {
+			fallBack(
+				'activateFrom',
+				`Unsupported activateFrom "${checked.activateFrom}"`
+			);
+		}
+
+		return checked;
 	}
 
 	/**
@@ -172,13 +427,13 @@ class LineObserver {
 	}
 
 	/**
-	 * Create IntersectionObserver for an instance
+	 * Returns the rootMargin of the band around the instance's trigger line.
 	 *
 	 * @param {Object} instance - The observer instance containing element and trigger configuration.
-	 * @return {IntersectionObserver}          The created IntersectionObserver.
+	 * @return {string} The rootMargin.
 	 * @private
 	 */
-	createObserver(instance) {
+	_nearRootMargin(instance) {
 		// Create a wide band around the trigger line as a nearness detector.
 		// IO only adds/removes elements from `nearInstances` — the RAF loop
 		// handles precise state transitions using fresh getBoundingClientRect.
@@ -186,13 +441,15 @@ class LineObserver {
 		// The `nearMargin` option (default: 100px) controls the band width.
 		// Larger values detect elements earlier but keep the RAF loop running
 		// longer; smaller values are more efficient but may miss fast scrolls.
-		// The active-instances pass in tick() acts as a safety net for elements
-		// that skip the band entirely during very fast scrolling, and the edge
-		// observer reports elements that cross the line without entering it.
+		// The active-instances pass in _readFrame() acts as a safety net for
+		// elements that skip the band entirely during very fast scrolling, and
+		// the edge observer reports elements that cross the line without
+		// entering it.
 		//
 		// Note: if nearMargin exceeds the trigger line's distance from a viewport
 		// edge, the rootMargin becomes positive on that side, extending the band
-		// beyond the viewport. This is harmless — tick() still does precise checks.
+		// beyond the viewport. This is harmless — _readFrame() still does
+		// precise checks.
 		//
 		// Example: 50vh trigger on 1000px viewport, nearMargin = 100
 		//   topMargin  = -500 + 100 = -400  (shrink viewport 400px from top)
@@ -204,16 +461,121 @@ class LineObserver {
 			this.viewportHeight - instance.triggerLinePx - margin
 		);
 
-		const observer = new IntersectionObserver(
-			(entries) => this.handleIntersection(entries, instance),
-			{
-				rootMargin: `${topMargin}px 0px ${bottomMargin}px 0px`,
-				threshold: [0],
-			}
-		);
+		return `${topMargin}px 0px ${bottomMargin}px 0px`;
+	}
 
-		observer.observe(instance.element);
-		return observer;
+	/**
+	 * Observes the element with the near and edge IntersectionObservers for its rootMargins, and moves it off one whose rootMargin no longer fits.
+	 *
+	 * An element that stays in the same IntersectionObserver is left alone,
+	 * so it gets no new first report.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @private
+	 */
+	_observe(instance) {
+		for (const [key, observers, rootMargin, handle] of [
+			[
+				'near',
+				this.nearObservers,
+				this._nearRootMargin(instance),
+				this.handleIntersection,
+			],
+			[
+				'edge',
+				this.edgeObservers,
+				this._edgeRootMargin(instance),
+				this.handleEdgeIntersection,
+			],
+		]) {
+			const current = instance[key];
+
+			if (current && current.rootMargin === rootMargin) {
+				continue;
+			}
+			if (current) {
+				this._leave(observers, current, instance.element);
+			}
+			instance[key] = this._join(observers, rootMargin, handle, instance);
+		}
+	}
+
+	/**
+	 * Stops observing the element.
+	 *
+	 * @param {Object} instance - The observer instance.
+	 * @private
+	 */
+	_unobserve(instance) {
+		this._leave(this.nearObservers, instance.near, instance.element);
+		this._leave(this.edgeObservers, instance.edge, instance.element);
+	}
+
+	/**
+	 * Removes the element from a shared IntersectionObserver, and disconnects it if no element is left.
+	 *
+	 * @param {Map}     observers - The near or edge observers, by rootMargin.
+	 * @param {Object}  shared    - The shared observer the element is in.
+	 * @param {Element} element   - The element.
+	 * @private
+	 */
+	_leave(observers, shared, element) {
+		shared.instances.delete(element);
+
+		if (shared.instances.size === 0) {
+			shared.observer.disconnect();
+			observers.delete(shared.rootMargin);
+		} else {
+			shared.observer.unobserve(element);
+		}
+	}
+
+	/**
+	 * Adds the element to this LineObserver's IntersectionObserver for `rootMargin`, and creates it if there is none.
+	 *
+	 * The same element can be registered with two LineObservers. `observe()`
+	 * on an element an IntersectionObserver already observes does nothing and
+	 * sends no first report, so LineObservers do not share them.
+	 *
+	 * @param {Map}      observers  - The near or edge observers, by rootMargin.
+	 * @param {string}   rootMargin - The rootMargin.
+	 * @param {Function} handle     - The handler for one instance's entries.
+	 * @param {Object}   instance   - The observer instance.
+	 * @return {Object} `{ observer, rootMargin, instances }`, where
+	 *                  `instances` maps each element to its instance.
+	 * @private
+	 */
+	_join(observers, rootMargin, handle, instance) {
+		let shared = observers.get(rootMargin);
+
+		if (!shared) {
+			const instances = new Map();
+
+			const observer = new IntersectionObserver(
+				(entries) => {
+					// The last entry for an element is its current state.
+					const latest = new Map(
+						entries.map((entry) => [entry.target, entry])
+					);
+
+					for (const [element, entry] of latest) {
+						const target = instances.get(element);
+						if (target) {
+							handle.call(this, [entry], target);
+						}
+					}
+				},
+				{ rootMargin, threshold: [0] }
+			);
+
+			shared = { observer, rootMargin, instances };
+			observers.set(rootMargin, shared);
+		}
+
+		shared.instances.set(instance.element, instance);
+		shared.observer.observe(instance.element);
+
+		return shared;
 	}
 
 	/**
@@ -222,9 +584,9 @@ class LineObserver {
 	 * IO fires when an element enters or leaves the wide band around the
 	 * trigger line. This method only manages the `nearInstances` and
 	 * `reportedInstances` sets and starts the RAF loop. Actual state
-	 * transitions happen in `tick()`.
+	 * transitions happen in a pass of the loop.
 	 *
-	 * @param {IntersectionObserverEntry[]} entries  - Array of intersection observer entries.
+	 * @param {IntersectionObserverEntry[]} entries  - Entries for the instance's element.
 	 * @param {Object}                      instance - The observer instance associated with the intersection.
 	 * @private
 	 */
@@ -254,7 +616,7 @@ class LineObserver {
 	}
 
 	/**
-	 * Creates an IntersectionObserver that reports each time the element's top edge crosses the trigger line.
+	 * Returns the rootMargin of an IntersectionObserver that reports each time the element's top edge crosses the trigger line.
 	 *
 	 * The root reaches from `EDGE_REACH` above the viewport down to the
 	 * trigger line, so the element intersects it while its top edge is above
@@ -263,31 +625,22 @@ class LineObserver {
 	 * the page at rest. This observer reports both.
 	 *
 	 * @param {Object} instance - The observer instance.
-	 * @return {IntersectionObserver} The created IntersectionObserver.
+	 * @return {string} The rootMargin.
 	 * @private
 	 */
-	createEdgeObserver(instance) {
+	_edgeRootMargin(instance) {
 		const bottomMargin = -(this.viewportHeight - instance.triggerLinePx);
 
-		const observer = new IntersectionObserver(
-			(entries) => this.handleEdgeIntersection(entries, instance),
-			{
-				rootMargin: `${EDGE_REACH}px 0px ${bottomMargin}px 0px`,
-				threshold: [0],
-			}
-		);
-
-		observer.observe(instance.element);
-		return observer;
+		return `${EDGE_REACH}px 0px ${bottomMargin}px 0px`;
 	}
 
 	/**
 	 * Asks for a pass when the element's top edge is on the other side of the line from where its state says.
 	 *
-	 * Each observer reports every element when it starts, and the state
+	 * IO reports every element when it starts observing it, and the state
 	 * already agrees for most of them, so those reports ask for nothing.
 	 *
-	 * @param {IntersectionObserverEntry[]} entries  - Array of intersection observer entries.
+	 * @param {IntersectionObserverEntry[]} entries  - Entries for the instance's element.
 	 * @param {Object}                      instance - The observer instance associated with the intersection.
 	 * @private
 	 */
@@ -336,10 +689,11 @@ class LineObserver {
 	/**
 	 * Calls a user callback and reports an error it throws.
 	 *
-	 * An uncaught error would leave `tick()` before it requests the next
-	 * frame. `isRunning` stays true, so `startLoop()` never requests one
-	 * again. The error would also skip the rest of the pass, the rest of a
-	 * resize pass, and the rest of a caller's loop over `register()`.
+	 * An uncaught error would leave the scheduler's frame before it requests
+	 * the next one. Every running observer keeps `isRunning` true, so
+	 * `startLoop()` never requests one for them again. The error would also
+	 * skip the rest of the frame, the rest of a resize pass, and the rest of
+	 * a caller's loop over `register()`.
 	 * `reportError()` fires the window `error` event, as an uncaught error
 	 * does, so error trackers still see it.
 	 *
@@ -450,15 +804,10 @@ class LineObserver {
 			return this;
 		}
 
-		const mergedOptions = { ...this.defaults, ...options };
-
-		const validActivateFrom = ['both', 'below', 'above'];
-		if (!validActivateFrom.includes(mergedOptions.activateFrom)) {
-			console.warn(
-				`LineObserver: Unsupported activateFrom "${mergedOptions.activateFrom}"`
-			);
-			mergedOptions.activateFrom = 'both';
-		}
+		const mergedOptions = {
+			...this.defaults,
+			...this._checkOptions(options, this.defaults),
+		};
 
 		const instance = {
 			element,
@@ -468,13 +817,11 @@ class LineObserver {
 			progress: 0,
 			elementHeight: 0,
 			triggerLinePx: this.parseTriggerLine(mergedOptions.triggerLine),
-			observer: null,
-			edgeObserver: null,
+			near: null,
+			edge: null,
 		};
 
-		// Create and attach observers
-		instance.observer = this.createObserver(instance);
-		instance.edgeObserver = this.createEdgeObserver(instance);
+		this._observe(instance);
 		this.instances.set(element, instance);
 
 		// Check initial state (element might already be in view)
@@ -542,8 +889,7 @@ class LineObserver {
 	 * @private
 	 */
 	_forget(instance) {
-		instance.observer.disconnect();
-		instance.edgeObserver.disconnect();
+		this._unobserve(instance);
 
 		this.activeInstances.delete(instance);
 		this.nearInstances.delete(instance);
@@ -632,7 +978,7 @@ class LineObserver {
 	 *
 	 * @param {Object}  instance - The observer instance to read.
 	 * @param {boolean} filter   - Whether `activateFrom` applies. It does not
-	 *                           at registration or after a resize.
+	 *                           at registration.
 	 * @return {Object|null} `{ instance, from, to, through, changed }`, or null.
 	 * @private
 	 */
@@ -745,25 +1091,25 @@ class LineObserver {
 	}
 
 	/**
-	 * Main RAF loop
+	 * Reads every element this frame's pass needs, and returns their changes, or null if there is no pass.
 	 *
-	 * Each pass reads every rect and height it needs, then writes classes,
-	 * styles and callbacks. A read that follows a write in the same frame
-	 * makes the browser lay out the page again.
+	 * It writes nothing to the DOM, so every observer's reads can run before
+	 * any observer's writes. `_apply()` writes the changes.
 	 *
 	 * With the page at rest, only an element IO has reported since the last
 	 * pass can have changed state, so a pass at rest reads only those. With
-	 * no move and no report, the loop stops after `STILL_FRAMES` ticks.
+	 * no move and no report, the loop stops after `STILL_FRAMES` frames.
 	 *
+	 * @param {number} scrollY - `window.scrollY`, read before any write in this frame.
+	 * @return {Object[]|null} Results of `_read()`, or null.
 	 * @private
 	 */
-	tick() {
-		if (this.destroyed || !this._hasWork()) {
+	_readFrame(scrollY) {
+		if (!this._hasWork()) {
 			this.isRunning = false;
-			return;
+			return null;
 		}
 
-		const scrollY = window.scrollY;
 		const moved = scrollY !== this.lastScrollY;
 
 		if (!moved && this.reportedInstances.size === 0) {
@@ -771,19 +1117,17 @@ class LineObserver {
 			// loop again.
 			if (++this.stillFrames >= STILL_FRAMES) {
 				this.isRunning = false;
-				return;
 			}
-			this.rafId = requestAnimationFrame(this.tick);
-			return;
+			return null;
 		}
 
 		this.stillFrames = 0;
+		this.lastScrollY = scrollY;
 
 		// After an anchor jump, Chromium runs this frame's RAF callbacks
 		// before the scroll event, so the direction can be one move behind.
-		this.trackDirection();
+		this.trackDirection(scrollY);
 
-		// === READ PHASE ===
 		const changes = [];
 		const read = (instance) => {
 			const change = this._read(instance, true);
@@ -820,23 +1164,14 @@ class LineObserver {
 
 		this.reportedInstances.clear();
 
-		// === WRITE PHASE ===
-		this._apply(changes);
-
-		// Update tracking
-		this.lastScrollY = scrollY;
-
-		// A callback can call destroy().
-		if (!this.destroyed) {
-			this.rafId = requestAnimationFrame(this.tick);
-		}
+		return changes;
 	}
 
 	/**
-	 * Starts the RAF loop if anything is near, active or reported.
+	 * Starts this observer's part of the shared loop if anything is near, active or reported.
 	 *
 	 * `lastScrollY` keeps the position of the last pass. The loop can stop
-	 * with elements active, and the first tick after a restart must see a
+	 * with elements active, and the first frame after a restart must see a
 	 * move made while it was stopped.
 	 *
 	 * @private
@@ -848,7 +1183,7 @@ class LineObserver {
 
 		this.isRunning = true;
 		this.stillFrames = 0;
-		this.rafId = requestAnimationFrame(this.tick);
+		scheduler.request();
 	}
 
 	/**
@@ -866,20 +1201,31 @@ class LineObserver {
 	}
 
 	/**
-	 * Records which way the page moved since the last call, and starts the loop.
+	 * Records which way the page moved, and starts the loop.
 	 *
-	 * This is the passive scroll listener, so it only reads, compares and
-	 * requests a frame. `tick()` also calls it, while the loop runs, so the
+	 * The move is measured from the position where the direction was last
+	 * set. A move of 1px or less, or of `DIRECTION_DEVICE_PIXELS` device
+	 * pixels or less, changes nothing, so Firefox's second step onto an
+	 * anchor does not reverse the jump to it. Small moves the same way add
+	 * up, so a slow scroll still sets the direction. Every move starts the
+	 * loop.
+	 *
+	 * It runs on every scroll event, so it only compares and requests a
+	 * frame. It also runs in `_readFrame()`, while the loop runs, so the
 	 * start does nothing there.
 	 *
+	 * @param {number} scrollY - `window.scrollY`.
 	 * @private
 	 */
-	trackDirection() {
-		const scrollY = window.scrollY;
+	trackDirection(scrollY) {
+		const move = scrollY - this.directionScrollY;
+		const minMove = Math.max(
+			1,
+			DIRECTION_DEVICE_PIXELS / (window.devicePixelRatio || 1)
+		);
 
-		if (scrollY !== this.directionScrollY) {
-			this.currentDirection =
-				scrollY > this.directionScrollY ? 'down' : 'up';
+		if (Math.abs(move) > minMove) {
+			this.currentDirection = move > 0 ? 'down' : 'up';
 			this.directionScrollY = scrollY;
 		}
 
@@ -887,45 +1233,57 @@ class LineObserver {
 	}
 
 	/**
-	 * Handle window resize
+	 * Reads the new viewport, observes each element with the line it moves to, and returns the changes a resize pass must apply.
 	 *
+	 * Like `_readFrame()`, it writes nothing to the DOM. `_apply()` writes the
+	 * changes.
+	 *
+	 * An element is read if its line moved, or if it is active, since a
+	 * resize can reflow the page and change its height. Any other element a
+	 * reflow moves across the line or the band gets an IO report.
+	 *
+	 * `activateFrom` filters these transitions by the direction of the last
+	 * scroll, so an element it holds active stays held. On a phone, the
+	 * toolbar showing or hiding resizes the viewport.
+	 *
+	 * @return {Object[]} Results of `_read()`.
 	 * @private
 	 */
-	handleResize() {
-		clearTimeout(this.resizeTimeout);
-		this.resizeTimeout = setTimeout(() => {
-			if (this.destroyed) {
-				return;
+	_readResize() {
+		const height = window.innerHeight;
+		const width = window.innerWidth;
+
+		if (height === this.viewportHeight && width === this.viewportWidth) {
+			return [];
+		}
+
+		this.viewportHeight = height;
+		this.viewportWidth = width;
+
+		const changes = [];
+
+		for (const instance of this.instances.values()) {
+			if (!instance.element.isConnected) {
+				continue;
 			}
 
-			this.viewportHeight = window.innerHeight;
-			this.viewportWidth = window.innerWidth;
+			const line = this.parseTriggerLine(instance.options.triggerLine);
+			const moved = line !== instance.triggerLinePx;
 
-			const changes = [];
+			// The rootMargins depend on the viewport height as well as the
+			// line, so a px line that stays put can still need new ones.
+			instance.triggerLinePx = line;
+			this._observe(instance);
 
-			// Recalculate trigger line, recreate observers, and re-check
-			// states. The line can move, so an element that stays active
-			// gets fresh values too.
-			for (const instance of this.instances.values()) {
-				if (!instance.element.isConnected) {
-					continue;
-				}
-				instance.observer.disconnect();
-				instance.edgeObserver.disconnect();
-				instance.triggerLinePx = this.parseTriggerLine(
-					instance.options.triggerLine
-				);
-				instance.observer = this.createObserver(instance);
-				instance.edgeObserver = this.createEdgeObserver(instance);
-
-				const change = this._read(instance, false);
+			if (moved || instance.state === 'active') {
+				const change = this._read(instance, true);
 				if (change) {
 					changes.push(change);
 				}
 			}
+		}
 
-			this._apply(changes);
-		}, 150);
+		return changes;
 	}
 
 	/**
@@ -947,7 +1305,7 @@ class LineObserver {
 	}
 
 	/**
-	 * Check if RAF loop is running
+	 * Check if this observer's part of the RAF loop is running
 	 *
 	 * @return {boolean} True if loop is active
 	 */
@@ -966,26 +1324,23 @@ class LineObserver {
 
 	/**
 	 * Clean up everything
+	 *
+	 * Other observers keep the shared loop and listeners. The last one to be
+	 * destroyed removes them.
 	 */
 	destroy() {
 		this.destroyed = true;
-
-		// Stop RAF
-		if (this.rafId) {
-			cancelAnimationFrame(this.rafId);
-		}
 		this.isRunning = false;
-		this.rafId = null;
+		scheduler.remove(this);
 
-		// Clear any pending resize timeout
-		if (this.resizeTimeout) {
-			clearTimeout(this.resizeTimeout);
+		for (const observers of [this.nearObservers, this.edgeObservers]) {
+			for (const { observer } of observers.values()) {
+				observer.disconnect();
+			}
+			observers.clear();
 		}
 
-		// Disconnect all observers
 		for (const instance of this.instances.values()) {
-			instance.observer.disconnect();
-			instance.edgeObserver.disconnect();
 			instance.element.classList.remove(
 				instance.options.activeClass,
 				instance.options.passedClass
@@ -1000,9 +1355,6 @@ class LineObserver {
 		this.activeInstances.clear();
 		this.nearInstances.clear();
 		this.reportedInstances.clear();
-
-		window.removeEventListener('resize', this.handleResize);
-		window.removeEventListener('scroll', this.trackDirection);
 	}
 }
 

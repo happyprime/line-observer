@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: recipes</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		/* The page's layout. Not part of the recipes. */
+
+		.demo-label {
+			margin: 0 0 8px;
+			font: 600 12px/1.4 ui-monospace, monospace;
+			color: #555;
+		}
+
+		.reveal,
+		.reveal-repeat,
+		.story,
+		.cards,
+		.parallax,
+		.clip,
+		.wp-block-theme-callout {
+			margin: 0 16px;
+			border: 2px solid #999;
+			background: #f2f2f2;
+		}
+
+		.reveal,
+		.reveal-repeat {
+			height: 240px;
+			padding: 12px;
+		}
+
+		.reveal__inner,
+		.wp-block-theme-callout__inner {
+			padding: 12px;
+			background: #087;
+			color: #fff;
+		}
+
+		.story {
+			height: 1200px;
+			padding: 0 12px 12px;
+		}
+
+		.story__bar {
+			color: #087;
+		}
+
+		.cards {
+			display: grid;
+			grid-template-columns: repeat(2, 1fr);
+			gap: 12px;
+			padding: 12px;
+			list-style: none;
+		}
+
+		.card {
+			height: 120px;
+			padding: 12px;
+			background: #087;
+			color: #fff;
+		}
+
+		.parallax {
+			height: 320px;
+			overflow: hidden;
+		}
+
+		.parallax__media {
+			display: block;
+			width: 100%;
+			height: calc(100% + 80px);
+			margin-top: -40px;
+			object-fit: cover;
+		}
+
+		.clip {
+			margin-right: 16px;
+			margin-left: 16px;
+			padding: 12px;
+		}
+
+		.clip video {
+			display: block;
+			width: 100%;
+			height: 200px;
+			background: #222;
+		}
+
+		.wp-block-theme-callout {
+			height: 200px;
+			padding: 12px;
+		}
+
+		.wp-block-theme-callout.is-active {
+			border-color: #087;
+		}
+
+		.wp-block-theme-callout.is-passed {
+			border-style: dashed;
+		}
+	</style>
+	<style>
+		/* The README's recipes, as written. */
+
+		/* Reveal once. */
+		.has-line-observer .reveal__inner {
+			opacity: 0;
+			transform: translateY(16px);
+			transition: opacity 0.4s, transform 0.4s;
+		}
+
+		.has-line-observer .reveal.is-active .reveal__inner {
+			opacity: 1;
+			transform: none;
+		}
+
+		.has-line-observer .reveal.is-passed .reveal__inner {
+			opacity: 1;
+			transform: none;
+		}
+
+		/* Progress. */
+		.story__bar {
+			position: sticky;
+			top: 0;
+			height: 4px;
+			background: currentColor;
+			transform: scaleX(var(--scroll-progress, 0));
+			transform-origin: left;
+		}
+
+		/* Stagger. */
+		.has-line-observer .card {
+			opacity: 0;
+			transform: translateY(16px);
+			transition: opacity 0.4s, transform 0.4s;
+			transition-delay: calc(var(--i, 0) * 100ms);
+		}
+
+		.has-line-observer .cards.is-active .card {
+			opacity: 1;
+			transform: none;
+		}
+
+		/* Parallax, native first. */
+		@keyframes parallax {
+			from {
+				transform: translateY(-40px);
+			}
+
+			to {
+				transform: translateY(40px);
+			}
+		}
+
+		@supports (animation-timeline: view()) {
+			.parallax {
+				view-timeline: --parallax;
+				view-timeline-inset: 50%;
+			}
+
+			.parallax__media {
+				animation: parallax linear both;
+				animation-timeline: --parallax;
+			}
+		}
+
+		@supports not (animation-timeline: view()) {
+			.parallax__media {
+				transform: translateY(calc(var(--scroll-progress, 0) * 80px - 40px));
+			}
+		}
+
+		/* Reduced motion. */
+		@media (prefers-reduced-motion: reduce) {
+			.has-line-observer .reveal__inner,
+			.has-line-observer .card {
+				transform: none;
+			}
+
+			.parallax__media {
+				animation: none;
+				transform: none;
+			}
+		}
+	</style>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Every recipe in the README, with its CSS and JavaScript as written there. The check runs the cases for the way the page loaded: as usual, with reduced motion, or with <code>line-observer.js</code> blocked. Mode: <strong id="mode"></strong>. Parallax path: <strong id="parallax-path"></strong>.</p>
+		<nav>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+
+		<p class="demo-label">Reveal once</p>
+		<section class="reveal" id="reveal">
+			<div class="reveal__inner">Revealed once. Scroll back up: it stays.</div>
+		</section>
+		<div class="spacer"></div>
+
+		<p class="demo-label">Reveal, without once: <code>is-passed</code> keeps it shown</p>
+		<section class="reveal-repeat" id="repeat">
+			<div class="reveal__inner">Shown while active or passed. The check registers this one without <code>once</code>.</div>
+		</section>
+		<div class="spacer"></div>
+
+		<p class="demo-label">Progress</p>
+		<article class="story" id="story">
+			<div class="story__bar"></div>
+			<p>The bar at the top fills as the line crosses this article.</p>
+		</article>
+		<div class="spacer"></div>
+
+		<p class="demo-label">Stagger</p>
+		<ul class="cards" id="cards">
+			<li class="card">Card 1</li>
+			<li class="card">Card 2</li>
+			<li class="card">Card 3</li>
+			<li class="card">Card 4</li>
+		</ul>
+		<div class="spacer"></div>
+
+		<p class="demo-label">Parallax, native first</p>
+		<section class="parallax" id="parallax">
+			<img class="parallax__media" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='400'%3E%3Cdefs%3E%3Cpattern id='s' width='40' height='40' patternUnits='userSpaceOnUse'%3E%3Crect width='40' height='40' fill='%23087'/%3E%3Crect width='40' height='20' fill='%2366c2a5'/%3E%3C/pattern%3E%3C/defs%3E%3Crect width='800' height='400' fill='url(%23s)'/%3E%3C/svg%3E" alt="">
+		</section>
+		<div class="spacer"></div>
+
+		<p class="demo-label">Reduced motion: a clip that plays while it spans the line</p>
+		<figure class="clip" id="clip">
+			<video muted playsinline loop></video>
+		</figure>
+		<div class="spacer"></div>
+
+		<p class="demo-label">WordPress block: <code>data-trigger-line="30vh" data-once</code></p>
+		<div class="wp-block-theme-callout" id="callout-a" data-trigger-line="30vh" data-once>
+			<div class="wp-block-theme-callout__inner">Line at 30vh, once.</div>
+		</div>
+		<div class="spacer"></div>
+
+		<p class="demo-label">WordPress block: <code>data-trigger-line="200" data-near-margin="50"</code></p>
+		<div class="wp-block-theme-callout" id="callout-b" data-trigger-line="200" data-near-margin="50">
+			<div class="wp-block-theme-callout__inner">Line at 200px, not once.</div>
+		</div>
+		<div class="spacer"></div>
+		<div class="spacer"></div>
+	</main>
+
+	<script>
+		// Counts play() and pause() calls, so a check can see what the clip recipe did.
+		window.mediaCalls = { play: 0, pause: 0 };
+
+		for (const name of ['play', 'pause']) {
+			const original = HTMLMediaElement.prototype[name];
+
+			HTMLMediaElement.prototype[name] = function (...args) {
+				window.mediaCalls[name]++;
+				return original.apply(this, args);
+			};
+		}
+	</script>
+
+	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
+
+	<script>
+		// The README's recipes, as written.
+
+		const observer = new LineObserver();
+
+		document.documentElement.classList.add('has-line-observer');
+
+		// Reveal once.
+		document.querySelectorAll('.reveal').forEach((element) => {
+			observer.register(element, { once: true });
+		});
+
+		// Progress.
+		document.querySelectorAll('.story').forEach((element) => {
+			observer.register(element);
+		});
+
+		// Stagger.
+		document.querySelectorAll('.cards').forEach((element) => {
+			observer.register(element, {
+				once: true,
+				onActivate: () => {
+					element.querySelectorAll('.card').forEach((card, index) => {
+						card.style.setProperty('--i', index);
+					});
+				},
+			});
+		});
+
+		// Parallax, native first.
+		if (!CSS.supports('animation-timeline', 'view()')) {
+			document.querySelectorAll('.parallax').forEach((element) => {
+				observer.register(element);
+			});
+		}
+
+		// Reduced motion.
+		const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+		if (!reduceMotion.matches) {
+			document.querySelectorAll('.clip').forEach((element) => {
+				const video = element.querySelector('video');
+
+				observer.register(element, {
+					onActivate: () => video.play().catch(() => {}),
+					onDeactivate: () => video.pause(),
+				});
+			});
+		}
+
+		// WordPress blocks.
+		document.querySelectorAll('.wp-block-theme-callout').forEach((element) => {
+			observer.register(element, {
+				triggerLine: element.dataset.triggerLine,
+				nearMargin: element.dataset.nearMargin,
+				once: element.hasAttribute('data-once'),
+			});
+		});
+	</script>
+
+	<script>
+		(() => {
+			const { waitFrames, jump, lineInto, rectOf, setUpChecks } = window.demoCheck;
+
+			const byId = (id) => document.getElementById(id);
+			const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+			const style = (element) => getComputedStyle(element);
+
+			// The y translation of a computed transform, or 'none'.
+			const translateY = (element) => {
+				const value = style(element).transform;
+				return value === 'none' ? 'none' : Math.round(new DOMMatrixReadOnly(value).m42);
+			};
+
+			// The x scale of a computed transform, to two places.
+			const scaleX = (element) => {
+				const value = style(element).transform;
+				return value === 'none' ? 1 : Math.round(new DOMMatrixReadOnly(value).a * 100) / 100;
+			};
+
+			// How far the 50vh line is into an element, from 0 to 1.
+			const progressOf = (element) => {
+				const rect = rectOf(element);
+				const line = window.innerHeight * 0.5;
+				return Math.min(1, Math.max(0, (line - rect.top) / (rect.bottom - rect.top)));
+			};
+
+			// The scroll position that puts an element's top edge `delta` px above a line `line` px from the top.
+			const topAt = (element, line, delta) => rectOf(element).top + window.scrollY - line + delta;
+
+			const classes = (element) => ({
+				active: element.classList.contains('is-active'),
+				passed: element.classList.contains('is-passed'),
+			});
+
+			const mode =
+				typeof window.LineObserver !== 'function'
+					? 'blocked'
+					: window.matchMedia('(prefers-reduced-motion: reduce)').matches
+						? 'reduce'
+						: 'normal';
+			const path = CSS.supports('animation-timeline', 'view()') ? 'native' : 'fallback';
+
+			byId('mode').textContent = mode;
+			byId('parallax-path').textContent = path;
+
+			const reveal = byId('reveal');
+			const repeat = byId('repeat');
+			const story = byId('story');
+			const cards = byId('cards');
+			const parallax = byId('parallax');
+			const media = parallax.querySelector('.parallax__media');
+			const clip = byId('clip');
+
+			const hiddenStates = () => [...document.querySelectorAll('.reveal__inner, .card')].map((element) => ({
+				opacity: Number(style(element).opacity),
+				transform: style(element).transform,
+			}));
+
+			const normal = [
+				{
+					// The page paints before the recipe script runs, so content
+					// below the line fades out after load, as the README says.
+					name: 'The script adds has-line-observer, and content below the line is hidden',
+					run: async () => {
+						await wait(600);
+						return {
+							expected: { added: true, reveal: 0, card: 0 },
+							actual: {
+								added: document.documentElement.classList.contains('has-line-observer'),
+								reveal: Number(style(reveal.querySelector('.reveal__inner')).opacity),
+								card: Number(style(cards.querySelector('.card')).opacity),
+							},
+						};
+					},
+				},
+				{
+					name: 'Reveal once: shown at the line, and still shown after scrolling back up',
+					run: async () => {
+						const inner = reveal.querySelector('.reveal__inner');
+						await jump(lineInto(reveal, 50));
+						await wait(600);
+						const at = { ...classes(reveal), opacity: Number(style(inner).opacity) };
+						await jump(lineInto(reveal, -200));
+						await wait(600);
+						const back = { ...classes(reveal), opacity: Number(style(inner).opacity) };
+						return {
+							expected: { at: { active: true, passed: false, opacity: 1 }, back: { active: true, passed: false, opacity: 1 } },
+							actual: { at, back },
+						};
+					},
+				},
+				{
+					name: 'Without once, is-passed keeps the content shown past the line, and it hides below the line',
+					run: async () => {
+						const inner = repeat.querySelector('.reveal__inner');
+						repeat.classList.add('reveal');
+						observer.register(repeat);
+						await jump(lineInto(repeat, repeat.offsetHeight + 100));
+						await wait(600);
+						const past = { ...classes(repeat), opacity: Number(style(inner).opacity) };
+						await jump(lineInto(repeat, -100));
+						await wait(600);
+						const below = { ...classes(repeat), opacity: Number(style(inner).opacity) };
+						return {
+							expected: { past: { active: false, passed: true, opacity: 1 }, below: { active: false, passed: false, opacity: 0 } },
+							actual: { past, below },
+						};
+					},
+				},
+				{
+					name: 'Progress: the bar follows the line through the article, holds 1 past it and 0 below it',
+					run: async () => {
+						const bar = story.querySelector('.story__bar');
+						const height = story.offsetHeight;
+						const rows = [];
+						for (const depth of [-100, height * 0.25, height * 0.5, height * 0.75, height + 100, -100]) {
+							await jump(lineInto(story, depth));
+							rows.push({ geometry: Math.round(progressOf(story) * 100) / 100, bar: scaleX(bar) });
+						}
+						return {
+							expected: [0, 0.25, 0.5, 0.75, 1, 0].map((p) => ({ geometry: p, bar: p })),
+							actual: rows,
+						};
+					},
+				},
+				{
+					name: 'Stagger: the cards fade in in order, 100ms apart',
+					run: async () => {
+						const list = [...cards.querySelectorAll('.card')];
+						const ends = new Map();
+						const start = performance.now();
+						const onEnd = (event) => {
+							if (event.propertyName === 'opacity' && !ends.has(event.target)) {
+								ends.set(event.target, performance.now() - start);
+							}
+						};
+						cards.addEventListener('transitionend', onEnd);
+						await jump(lineInto(cards, 50));
+						await wait(1200);
+						cards.removeEventListener('transitionend', onEnd);
+						const order = [...ends.entries()].sort((a, b) => a[1] - b[1]).map(([card]) => list.indexOf(card));
+						return {
+							expected: { delays: [0, 100, 200, 300], order: [0, 1, 2, 3], opacity: [1, 1, 1, 1] },
+							actual: {
+								delays: list.map((card) => Math.round(parseFloat(style(card).transitionDelay) * 1000)),
+								order,
+								opacity: list.map((card) => Number(style(card).opacity)),
+							},
+						};
+					},
+				},
+				{
+					name: `Parallax, ${path} path: the image moves from -40px to 40px as the line crosses the section`,
+					run: async () => {
+						const height = parallax.offsetHeight;
+						const rows = [];
+						for (const depth of [-100, 0, height * 0.25, height * 0.5, height * 0.75, height, height + 100]) {
+							await jump(lineInto(parallax, depth));
+							await waitFrames(2);
+							rows.push({ expected: Math.round(-40 + 80 * progressOf(parallax)), image: translateY(media) });
+						}
+						return {
+							expected: {
+								path,
+								registered: path === 'fallback',
+								rows: rows.map(({ expected }) => ({ expected, image: expected })),
+							},
+							actual: {
+								path,
+								registered: parallax.style.getPropertyValue('--scroll-progress') !== '',
+								rows,
+							},
+						};
+					},
+				},
+				{
+					name: 'Clip: the video plays while the clip spans the line, and pauses after',
+					run: async () => {
+						await jump(lineInto(clip, -100));
+						window.mediaCalls.play = 0;
+						window.mediaCalls.pause = 0;
+						await jump(lineInto(clip, 100));
+						const on = { ...window.mediaCalls };
+						await jump(lineInto(clip, clip.offsetHeight + 100));
+						return {
+							expected: { on: { play: 1, pause: 0 }, past: { play: 1, pause: 1 } },
+							actual: { on, past: { ...window.mediaCalls } },
+						};
+					},
+				},
+				{
+					name: 'WordPress: data-trigger-line="30vh" data-once, and "200" with no data-once',
+					run: async () => {
+						const results = {};
+						for (const [id, line] of [['callout-a', window.innerHeight * 0.3], ['callout-b', 200]]) {
+							const element = byId(id);
+							await jump(topAt(element, line, -10));
+							const before = classes(element);
+							await jump(topAt(element, line, 10));
+							const at = classes(element);
+							await jump(topAt(element, line, element.offsetHeight + 10));
+							results[id] = { before, at, past: classes(element) };
+						}
+						return {
+							expected: {
+								'callout-a': {
+									before: { active: false, passed: false },
+									at: { active: true, passed: false },
+									past: { active: true, passed: false },
+								},
+								'callout-b': {
+									before: { active: false, passed: false },
+									at: { active: true, passed: false },
+									past: { active: false, passed: true },
+								},
+							},
+							actual: results,
+						};
+					},
+				},
+			];
+
+			const reduce = [
+				{
+					name: 'Reduced motion: the reveal and cards below the line are hidden, with no movement',
+					run: async () => {
+						await wait(600);
+						const first = (element) => ({ opacity: Number(style(element).opacity), transform: style(element).transform });
+						return {
+							expected: { reveal: { opacity: 0, transform: 'none' }, card: { opacity: 0, transform: 'none' } },
+							actual: {
+								reveal: first(reveal.querySelector('.reveal__inner')),
+								card: first(cards.querySelector('.card')),
+							},
+						};
+					},
+				},
+				{
+					name: 'Reduced motion: the reveal still fades in at the line',
+					run: async () => {
+						const inner = reveal.querySelector('.reveal__inner');
+						await jump(lineInto(reveal, 50));
+						await wait(600);
+						return {
+							expected: { active: true, passed: false, opacity: 1, transform: 'none' },
+							actual: { ...classes(reveal), opacity: Number(style(inner).opacity), transform: style(inner).transform },
+						};
+					},
+				},
+				{
+					name: `Reduced motion, ${path} path: the parallax image doesn't move`,
+					run: async () => {
+						const height = parallax.offsetHeight;
+						const rows = [];
+						for (const depth of [0, height * 0.5, height]) {
+							await jump(lineInto(parallax, depth));
+							rows.push({ animation: style(media).animationName, transform: style(media).transform });
+						}
+						return {
+							expected: [0, 1, 2].map(() => ({ animation: 'none', transform: 'none' })),
+							actual: rows,
+						};
+					},
+				},
+				{
+					name: 'Reduced motion: the clip is not registered, and its video never plays',
+					run: async () => {
+						window.mediaCalls.play = 0;
+						window.mediaCalls.pause = 0;
+						await jump(lineInto(clip, -100));
+						await jump(lineInto(clip, 100));
+						await jump(lineInto(clip, clip.offsetHeight + 100));
+						return {
+							expected: { active: false, play: 0, pause: 0 },
+							actual: { active: clip.classList.contains('is-active'), ...window.mediaCalls },
+						};
+					},
+				},
+			];
+
+			const blocked = [
+				{
+					name: 'Script blocked: LineObserver is missing, and has-line-observer is not set',
+					run: async () => ({
+						expected: { LineObserver: 'undefined', added: false },
+						actual: {
+							LineObserver: typeof window.LineObserver,
+							added: document.documentElement.classList.contains('has-line-observer'),
+						},
+					}),
+				},
+				{
+					name: 'Script blocked: every reveal and card is shown, in place',
+					run: async () => {
+						const states = hiddenStates();
+						return {
+							expected: states.map(() => ({ opacity: 1, transform: 'none' })),
+							actual: states,
+						};
+					},
+				},
+			];
+
+			setUpChecks({ normal, reduce, blocked }[mode]);
+		})();
+	</script>
+</body>
+</html>
