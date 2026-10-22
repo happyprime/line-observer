@@ -243,11 +243,12 @@ describe('LineObserver', () => {
 			expect(instance.state).toBe('inactive');
 		});
 
-		it('should create IntersectionObserver for the element', () => {
+		it('should create the near and edge IntersectionObservers for the element', () => {
 			observer.register(element);
 
-			expect(MockIntersectionObserver.instances.length).toBe(1);
+			expect(MockIntersectionObserver.instances.length).toBe(2);
 			expect(MockIntersectionObserver.instances[0].observedElements).toContain(element);
+			expect(MockIntersectionObserver.instances[1].observedElements).toContain(element);
 		});
 
 		it('should warn and return early if element is already registered', () => {
@@ -864,8 +865,8 @@ describe('LineObserver', () => {
 			observer.handleResize();
 			vi.advanceTimersByTime(200);
 
-			// A new observer should have been created
-			expect(MockIntersectionObserver.instances.length).toBe(initialObserverCount + 1);
+			// A new near observer and a new edge observer
+			expect(MockIntersectionObserver.instances.length).toBe(initialObserverCount + 2);
 
 			document.body.removeChild(element);
 		});
@@ -2929,6 +2930,7 @@ describe('activation after a jump', () => {
 		expect(instance.state).toBe('passed');
 		observer.handleIntersection([{ isIntersecting: true }], instance);
 		observer.tick();
+		onScroll.mockClear();
 
 		// A 400px jump up leaves the line 50px into the element.
 		scrollTo(600);
@@ -3234,18 +3236,21 @@ describe('a pass at rest', () => {
 		expect(onDeactivate).toHaveBeenCalledTimes(1);
 	});
 
-	it('should forget a report when the loop stops', () => {
+	it('should read a report before the loop stops, and only once', () => {
 		const lone = new LineObserver({ triggerLine: '50vh' });
 		const late = document.createElement('div');
 		const lateScroll = vi.fn();
 		document.body.append(late);
 
-		// `other` comes near and leaves again before a tick runs, so the
-		// loop stops with its report unread.
+		// `other` comes near and leaves again before a tick runs. Nothing
+		// is near or active, and the report still gets its pass.
 		place(other, 1300, 1600);
 		lone.register(other);
+		other.getBoundingClientRect.mockClear();
 		lone.handleIntersection([{ isIntersecting: true }], lone.instances.get(other));
 		lone.handleIntersection([{ isIntersecting: false }], lone.instances.get(other));
+		lone.tick();
+		expect(other.getBoundingClientRect).toHaveBeenCalledTimes(1);
 		lone.tick();
 		expect(lone.isActive()).toBe(false);
 
@@ -3253,9 +3258,11 @@ describe('a pass at rest', () => {
 		place(late, 400, 700);
 		lone.register(late, { onScroll: lateScroll });
 		late.getBoundingClientRect.mockClear();
+		other.getBoundingClientRect.mockClear();
 		lateScroll.mockClear();
 		lone.tick();
 
+		expect(other.getBoundingClientRect).not.toHaveBeenCalled();
 		expect(late.getBoundingClientRect).not.toHaveBeenCalled();
 		expect(lateScroll).not.toHaveBeenCalled();
 
@@ -4190,6 +4197,395 @@ describe('offset and progress from the position', () => {
 			expect(observer.instances.get(element).state).toBe('active');
 			expect(values()).toEqual({ offset: '300', progress: '0.75' });
 			expect(log).toEqual(['onScroll 300 0.75']);
+		});
+	});
+});
+
+describe('elements that reach the line without a pass on it', () => {
+	let observer;
+	let element;
+	let other;
+	let log;
+
+	const place = (target, top, bottom) => {
+		target.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	// The IntersectionObservers watching an element, near one first.
+	const observersOf = (target) =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(target)
+		);
+
+	// IO reports that the element is in the band around the line.
+	const near = (target) => observersOf(target)[0].trigger([{ isIntersecting: true }]);
+
+	// IO reports which side of the line the element's top edge is on.
+	const edge = (target, topAboveLine) =>
+		observersOf(target)[1]?.trigger([{ isIntersecting: topAboveLine }]);
+
+	const callbacks = (name) => ({
+		onActivate: () => log.push(`${name} onActivate`),
+		onDeactivate: () => log.push(`${name} onDeactivate`),
+		onScroll: (offset, target, instance) =>
+			log.push(`${name} onScroll ${offset} ${instance.progress}`),
+	});
+
+	const classes = (target) => [...target.classList];
+
+	const values = (target) => ({
+		offset: target.style.getPropertyValue('--scroll-offset'),
+		progress: target.style.getPropertyValue('--scroll-progress'),
+	});
+
+	beforeEach(() => {
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		element = document.createElement('div');
+		other = document.createElement('div');
+		document.body.append(element, other);
+		log = [];
+	});
+
+	afterEach(() => {
+		element.remove();
+		other.remove();
+		observer.destroy();
+	});
+
+	describe('once', () => {
+		it('should reveal the element at the line, then stop observing it', () => {
+			place(element, 550, 950);
+			observer.register(element, { once: true, ...callbacks('a') });
+			near(element);
+			observer.tick();
+
+			scrollWindowTo(100);
+			place(element, 450, 850);
+			observer.tick();
+
+			expect(classes(element)).toEqual(['is-active']);
+			expect(values(element)).toEqual({ offset: '50', progress: '0.125' });
+			expect(log).toEqual(['a onActivate', 'a onScroll 50 0.125']);
+			expect(observer.getTotalCount()).toBe(0);
+			expect(observer.getActiveCount()).toBe(0);
+			expect(observersOf(element)).toEqual([]);
+
+			// Back below the line, nothing changes, and the loop stops.
+			scrollWindowTo(0);
+			place(element, 550, 950);
+			observer.tick();
+
+			expect(classes(element)).toEqual(['is-active']);
+			expect(log).toHaveLength(2);
+			expect(observer.isActive()).toBe(false);
+		});
+
+		it('should reveal an element found past the line at register()', () => {
+			place(element, 100, 400);
+			observer.register(element, { once: true, ...callbacks('a') });
+
+			expect(classes(element)).toEqual(['is-active']);
+			expect(values(element)).toEqual({ offset: '300', progress: '1' });
+			expect(log).toEqual(['a onActivate', 'a onScroll 300 1']);
+			expect(observer.getTotalCount()).toBe(0);
+			expect(observersOf(element)).toEqual([]);
+			expect(observer.isActive()).toBe(false);
+		});
+
+		it('should reveal an element a jump took across the line far from it', () => {
+			place(element, 1300, 1700);
+			observer.register(element, { once: true, ...callbacks('a') });
+
+			// The page jumps 2000px. The element never enters the band.
+			scrollWindowTo(2000);
+			place(element, -700, -300);
+			edge(element, true);
+			observer.tick();
+
+			expect(classes(element)).toEqual(['is-active']);
+			expect(log).toEqual(['a onActivate', 'a onScroll 400 1']);
+			expect(observer.getTotalCount()).toBe(0);
+		});
+
+		it('should reveal an element skipped between two frames', () => {
+			// A 40px heading, just below the line, in the band.
+			place(element, 560, 600);
+			observer.register(element, { once: true, ...callbacks('a') });
+			near(element);
+			observer.tick();
+
+			// One 100px frame takes it from below the line to above it.
+			scrollWindowTo(100);
+			place(element, 460, 500);
+			observer.tick();
+
+			expect(classes(element)).toEqual(['is-active']);
+			expect(log).toEqual(['a onActivate', 'a onScroll 40 1']);
+		});
+
+		it('should reveal an element a layout change moved above the line at rest', () => {
+			place(element, 1300, 1340);
+			observer.register(element, { once: true, ...callbacks('a') });
+
+			// Content above it collapses. It ends 400px above the line,
+			// outside the band, with the page still.
+			place(element, 60, 100);
+			edge(element, true);
+			expect(observer.isActive()).toBe(true);
+			observer.tick();
+
+			expect(classes(element)).toEqual(['is-active']);
+			expect(log).toEqual(['a onActivate', 'a onScroll 40 1']);
+		});
+
+		it('should leave a revealed element alone on unregister() and destroy()', () => {
+			place(element, 300, 700);
+			observer.register(element, { once: true });
+
+			observer.unregister(element);
+			expect(classes(element)).toEqual(['is-active']);
+			expect(values(element)).toEqual({ offset: '200', progress: '0.5' });
+
+			observer.destroy();
+			expect(classes(element)).toEqual(['is-active']);
+			expect(values(element)).toEqual({ offset: '200', progress: '0.5' });
+		});
+
+		it('should not reveal an element with no box until it has one', () => {
+			// `display: none` gives a rect of zeros.
+			element.getBoundingClientRect = vi.fn().mockReturnValue({
+				top: 0,
+				bottom: 0,
+				width: 0,
+				height: 0,
+			});
+			observer.register(element, { once: true, ...callbacks('a') });
+
+			expect(observer.instances.get(element).state).toBe('inactive');
+			expect(classes(element)).toEqual([]);
+
+			// It is shown, past the line.
+			place(element, 60, 100);
+			edge(element, true);
+			observer.tick();
+
+			expect(classes(element)).toEqual(['is-active']);
+			expect(log).toEqual(['a onActivate', 'a onScroll 40 1']);
+		});
+	});
+
+	describe('passedClass', () => {
+		it('should be present exactly while the element is past the line', () => {
+			place(element, 200, 800);
+			place(other, 210, 810);
+			observer.register(element);
+			observer.register(other, { passedClass: 'is-done' });
+			near(element);
+			near(other);
+			observer.tick();
+			expect(classes(element)).toEqual(['is-active']);
+
+			scrollWindowTo(400);
+			place(element, -200, 400);
+			place(other, -190, 410);
+			observer.tick();
+			expect(classes(element)).toEqual(['is-passed']);
+			expect(classes(other)).toEqual(['is-done']);
+
+			scrollWindowTo(100);
+			place(element, 100, 700);
+			place(other, 110, 710);
+			observer.tick();
+			expect(classes(element)).toEqual(['is-active']);
+			expect(classes(other)).toEqual(['is-active']);
+
+			scrollWindowTo(-200);
+			place(element, 600, 1200);
+			place(other, 610, 1210);
+			observer.tick();
+			expect(classes(element)).toEqual([]);
+			expect(classes(other)).toEqual([]);
+		});
+
+		it('should be removed by unregister() and destroy()', () => {
+			place(element, 100, 400);
+			place(other, 100, 400);
+			observer.register(element);
+			observer.register(other);
+			expect(classes(element)).toEqual(['is-passed']);
+
+			observer.unregister(element);
+			expect(classes(element)).toEqual([]);
+
+			observer.destroy();
+			expect(classes(other)).toEqual([]);
+		});
+	});
+
+	describe('balanced callbacks', () => {
+		it('should activate, hold the end value and deactivate an element found past the line at register()', () => {
+			place(element, 100, 400);
+			observer.register(element, callbacks('a'));
+
+			expect(log).toEqual(['a onActivate', 'a onScroll 300 1', 'a onDeactivate']);
+			expect(observer.instances.get(element).state).toBe('passed');
+			expect(classes(element)).toEqual(['is-passed']);
+			expect(values(element)).toEqual({ offset: '300', progress: '1' });
+			expect(observer.getTotalCount()).toBe(1);
+			expect(observer.isActive()).toBe(false);
+		});
+
+		it('should ignore activateFrom at register()', () => {
+			place(element, 100, 400);
+			observer.register(element, { activateFrom: 'above', ...callbacks('a') });
+
+			expect(log).toEqual(['a onActivate', 'a onScroll 300 1', 'a onDeactivate']);
+		});
+
+		it('should do the same for an element skipped between two frames', () => {
+			place(element, 560, 600);
+			observer.register(element, callbacks('a'));
+			near(element);
+			observer.tick();
+
+			scrollWindowTo(100);
+			place(element, 460, 500);
+			observer.tick();
+
+			expect(log).toEqual(['a onActivate', 'a onScroll 40 1', 'a onDeactivate']);
+			expect(classes(element)).toEqual(['is-passed']);
+		});
+
+		it('should do the same for an element a jump took across the line far from it', () => {
+			place(element, 1300, 1700);
+			observer.register(element, callbacks('a'));
+
+			scrollWindowTo(2000);
+			place(element, -700, -300);
+			edge(element, true);
+			observer.tick();
+
+			expect(log).toEqual(['a onActivate', 'a onScroll 400 1', 'a onDeactivate']);
+			expect(classes(element)).toEqual(['is-passed']);
+		});
+
+		it('should do the same for an element a layout change moved above the line at rest', () => {
+			place(element, 1300, 1340);
+			observer.register(element, callbacks('a'));
+
+			place(element, 60, 100);
+			edge(element, true);
+			observer.tick();
+
+			expect(log).toEqual(['a onActivate', 'a onScroll 40 1', 'a onDeactivate']);
+		});
+
+		it('should mirror it when an element goes straight from passed to inactive', () => {
+			place(element, 100, 400);
+			observer.register(element, callbacks('a'));
+			log = [];
+
+			// A jump back to the top of the page.
+			scrollWindowTo(-1000);
+			place(element, 1100, 1400);
+			edge(element, false);
+			observer.tick();
+
+			expect(log).toEqual(['a onActivate', 'a onScroll 0 0', 'a onDeactivate']);
+			expect(observer.instances.get(element).state).toBe('inactive');
+			expect(classes(element)).toEqual([]);
+			expect(values(element)).toEqual({ offset: '0', progress: '0' });
+		});
+
+		it('should filter a skipped element by direction, as it filters a crossing', () => {
+			// Two 40px headings just below the line.
+			place(element, 560, 600);
+			place(other, 560, 600);
+			observer.register(element, { activateFrom: 'below', ...callbacks('below') });
+			observer.register(other, { activateFrom: 'above', ...callbacks('above') });
+			near(element);
+			near(other);
+			observer.tick();
+
+			// Down past both in one frame: only 'below' activates.
+			scrollWindowTo(100);
+			place(element, 460, 500);
+			place(other, 460, 500);
+			observer.tick();
+
+			expect(log).toEqual(['below onActivate', 'below onScroll 40 1', 'below onDeactivate']);
+			expect(classes(element)).toEqual(['is-passed']);
+			expect(classes(other)).toEqual(['is-passed']);
+
+			// Up past both in one frame: only 'above' activates.
+			log = [];
+			scrollWindowTo(0);
+			place(element, 560, 600);
+			place(other, 560, 600);
+			observer.tick();
+
+			expect(log).toEqual(['above onActivate', 'above onScroll 0 0', 'above onDeactivate']);
+			expect(classes(element)).toEqual([]);
+			expect(classes(other)).toEqual([]);
+		});
+	});
+
+	describe('the edge observer', () => {
+		it('should end its root at the trigger line and be rebuilt on resize', () => {
+			vi.useFakeTimers();
+			place(element, 1300, 1600);
+			observer.register(element);
+			const [, before] = observersOf(element);
+			expect(before.options.rootMargin).toBe('10000000px 0px -500px 0px');
+
+			Object.defineProperty(window, 'innerHeight', {
+				value: 1200,
+				configurable: true,
+			});
+			observer.handleResize();
+			vi.advanceTimersByTime(200);
+			vi.useRealTimers();
+
+			const [, after] = observersOf(element);
+			expect(after).not.toBe(before);
+			expect(after.options.rootMargin).toBe('10000000px 0px -600px 0px');
+			expect(before.observedElements).toEqual([]);
+		});
+
+		it('should be disconnected on unregister() and destroy()', () => {
+			place(element, 1300, 1600);
+			place(other, 1300, 1600);
+			observer.register(element);
+			observer.register(other);
+			expect(observersOf(element)).toHaveLength(2);
+
+			observer.unregister(element);
+			expect(observersOf(element)).toEqual([]);
+
+			observer.destroy();
+			expect(observersOf(other)).toEqual([]);
+		});
+
+		it('should ask for nothing when its report agrees with the state', () => {
+			place(element, 1300, 1600);
+			place(other, 100, 400);
+			observer.register(element);
+			observer.register(other);
+			element.getBoundingClientRect.mockClear();
+			other.getBoundingClientRect.mockClear();
+
+			// IO's first reports, as after register().
+			edge(element, false);
+			edge(other, true);
+
+			expect(observer.isActive()).toBe(false);
+			expect(observer.reportedInstances.size).toBe(0);
+
+			// One that disagrees asks for a pass.
+			edge(element, true);
+			expect(observer.isActive()).toBe(true);
+			expect(observer.reportedInstances.size).toBe(1);
 		});
 	});
 });
