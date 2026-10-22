@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: reveal once</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		/* Scroll anchoring stays on, the browser default. */
+
+		main {
+			max-width: 40rem;
+			margin: 0 auto;
+		}
+
+		.card {
+			height: 200px;
+			margin: 0 16px 24px;
+			border: 2px solid #999;
+		}
+
+		/* The reveal: a CSS transition on a child, started by is-active. */
+		.card__body,
+		.heading span {
+			display: block;
+			height: 100%;
+			padding: 12px;
+			background: #dff5ec;
+			opacity: 0;
+			transform: translateY(16px);
+			transition: opacity 0.4s, transform 0.4s;
+		}
+
+		.card.is-active .card__body,
+		.heading.is-active span {
+			opacity: 1;
+			transform: none;
+		}
+
+		.heading {
+			height: 40px;
+			margin: 0 16px 8px;
+			font-size: 16px;
+			line-height: 16px;
+		}
+
+		.heading span {
+			padding: 12px;
+		}
+
+		/* A section that is not `once`. is-passed holds its end state. */
+		.stamp {
+			height: 300px;
+			margin: 0 16px;
+			border: 2px solid #999;
+		}
+
+		.stamp__fill {
+			height: 24px;
+			background: #087;
+			transform: scaleX(var(--scroll-progress, 0));
+			transform-origin: left;
+		}
+
+		.stamp.is-passed {
+			border-color: #087;
+		}
+
+		.stamp.is-passed .stamp__label::after {
+			content: ", passed";
+		}
+
+		.spacer.short {
+			height: 60vh;
+		}
+
+		.spacer.tall {
+			height: 150vh;
+		}
+	</style>
+</head>
+<body>
+	<div id="top"></div>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Each card and heading fades in once, when it reaches the line or is found past it, and stays. Load the page at c6: every card down to the line shows. Flick through the headings, add filtered cards above the page, or jump past the D cards and back: they all show. The stamp, which is not <code>once</code>, gets <code>is-passed</code> past the line.</p>
+		<nav>
+			<a href="?at=c6#c6">Load at c6</a>
+			<a href="#top">Top</a>
+			<a href="#end">End</a>
+			<button type="button" id="filter">Filter: add cards above</button>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>Revealed: <strong id="count">0</strong>. Still observed: <strong id="observed">0</strong>.</p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer short"></div>
+		<div id="cards"></div>
+		<div class="spacer"></div>
+		<div id="headings"></div>
+		<div class="spacer tall"></div>
+		<div id="later"></div>
+		<section class="stamp" id="stamp">
+			<div class="stamp__label">Stamp, not <code>once</code></div>
+			<div class="stamp__fill"></div>
+		</section>
+		<div class="spacer"></div>
+		<div id="end"></div>
+	</main>
+
+	<!-- Cards a filter leaves out. They have no box until the filter adds them. -->
+	<div id="pool" hidden></div>
+
+	<script>
+		// The URL with ?check loads the page again at #c6, and checks there.
+		const params = new URLSearchParams(location.search);
+		const reloading = params.has('check') && !params.has('at');
+		if (reloading) {
+			location.replace(`${location.pathname}?check&at=c6#c6`);
+		}
+
+		const card = (id, label = id) => {
+			const element = document.createElement('section');
+			element.className = 'card';
+			element.id = id;
+			element.innerHTML = `<div class="card__body"><strong>${label}</strong></div>`;
+			return element;
+		};
+
+		for (let i = 1; i <= 10; i++) {
+			document.getElementById('cards').append(card(`c${i}`));
+		}
+		for (let i = 1; i <= 38; i++) {
+			const heading = document.createElement('h3');
+			heading.className = 'heading';
+			heading.id = `h${i}`;
+			heading.innerHTML = `<span>Heading ${i}</span>`;
+			document.getElementById('headings').append(heading);
+		}
+		for (let i = 1; i <= 8; i++) {
+			document.getElementById('later').append(card(`d${i}`));
+		}
+		for (const id of ['f1', 'f2']) {
+			document.getElementById('pool').append(card(id, `${id}, added by the filter`));
+		}
+	</script>
+	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, rectOf, triggerLine, setUpChecks } = window.demoCheck;
+
+		const revealed = new Set();
+		const stampCalls = [];
+
+		const showCounts = () => {
+			document.getElementById('count').textContent = revealed.size;
+			document.getElementById('observed').textContent = observer.getTotalCount();
+		};
+
+		const observer = new LineObserver({ triggerLine: '50vh' });
+
+		const reveal = (element) =>
+			observer.register(element, {
+				once: true,
+				onActivate: () => {
+					revealed.add(element.id);
+					showCounts();
+				},
+			});
+
+		document.querySelectorAll('.card, .heading').forEach(reveal);
+
+		observer.register(document.getElementById('stamp'), {
+			onActivate: () => stampCalls.push('onActivate'),
+			onDeactivate: () => stampCalls.push('onDeactivate'),
+		});
+
+		showCounts();
+
+		// Adds the left-out cards, and one new card, above c1.
+		const filter = () => {
+			if (document.getElementById('n1')) {
+				return;
+			}
+			const c1 = document.getElementById('c1');
+			for (const element of [...document.getElementById('pool').children]) {
+				c1.before(element);
+			}
+			const added = card('n1', 'n1, new from the filter');
+			c1.before(added);
+			reveal(added);
+		};
+
+		document.getElementById('filter').addEventListener('click', filter);
+
+		const ids = (selector) => [...document.querySelectorAll(selector)].map((element) => element.id);
+
+		const withClass = (selector) =>
+			[...document.querySelectorAll(selector)]
+				.filter((element) => element.classList.contains('is-active'))
+				.map((element) => element.id);
+
+		const follow = async (hash) => {
+			history.replaceState(null, '', location.pathname + location.search);
+			document.querySelector(`a[href="${hash}"]`).click();
+			await waitFrames();
+		};
+
+		const stamp = document.getElementById('stamp');
+
+		const cases = [
+			{
+				name: 'Loaded at #c6: every card down to the line is revealed',
+				run: async () => {
+					await waitFrames();
+					const cards = '#cards .card';
+					return {
+						expected: {
+							loadedAt: '#c6',
+							revealed: ids(cards).filter(
+								(id) => rectOf(document.getElementById(id)).top <= triggerLine()
+							),
+						},
+						actual: {
+							loadedAt: location.hash,
+							revealed: withClass(cards),
+						},
+					};
+				},
+			},
+			{
+				name: 'Flick through 38 headings at 100px a frame: all revealed',
+				run: async () => {
+					const headings = document.getElementById('headings');
+					const all = ids('.heading');
+					all.forEach((id) => revealed.delete(id));
+					await jump(lineInto(headings, -300));
+					const end = lineInto(headings, headings.offsetHeight + 300);
+					for (let last = -1; window.scrollY < end && window.scrollY !== last; ) {
+						last = window.scrollY;
+						window.scrollBy({ top: 100, behavior: 'instant' });
+						await waitFrames(1);
+					}
+					await waitFrames();
+					return {
+						expected: { activated: all.length, withClass: all.length },
+						actual: {
+							activated: all.filter((id) => revealed.has(id)).length,
+							withClass: withClass('.heading').length,
+						},
+					};
+				},
+			},
+			{
+				name: 'Filter adds cards above the scroll position: they are revealed',
+				run: async () => {
+					await jump(lineInto(document.getElementById('c9'), 100));
+					const before = withClass('#pool .card');
+					filter();
+					await waitFrames();
+					const added = ['f1', 'f2', 'n1'];
+					return {
+						expected: { before: [], aboveViewport: added, revealed: added },
+						actual: {
+							before,
+							aboveViewport: added.filter(
+								(id) => rectOf(document.getElementById(id)).bottom <= 0
+							),
+							revealed: withClass('#cards .card').filter((id) => !id.startsWith('c')),
+						},
+					};
+				},
+			},
+			{
+				name: 'Anchor jump past the D cards and back: all revealed, none loses its class',
+				run: async () => {
+					await follow('#top');
+					const classed = withClass('.card, .heading');
+					await follow('#end');
+					await follow('#top');
+					const d = ids('#later .card');
+					return {
+						expected: {
+							dRevealed: d,
+							stillClassed: classed,
+							observed: 0,
+						},
+						actual: {
+							dRevealed: withClass('#later .card'),
+							stillClassed: classed.filter((id) =>
+								document.getElementById(id).classList.contains('is-active')
+							),
+							observed: observer.getTotalCount() - 1,
+						},
+					};
+				},
+			},
+			{
+				name: 'The stamp, not once, holds is-passed past the line and drops it above',
+				run: async () => {
+					await follow('#top');
+					stampCalls.length = 0;
+					await follow('#end');
+					const past = {
+						classes: [...stamp.classList],
+						progress: stamp.style.getPropertyValue('--scroll-progress'),
+					};
+					await follow('#top');
+					return {
+						expected: {
+							past: { classes: ['stamp', 'is-passed'], progress: '1' },
+							above: { classes: ['stamp'], progress: '0' },
+							calls: ['onActivate', 'onDeactivate', 'onActivate', 'onDeactivate'],
+						},
+						actual: {
+							past,
+							above: {
+								classes: [...stamp.classList],
+								progress: stamp.style.getPropertyValue('--scroll-progress'),
+							},
+							calls: stampCalls,
+						},
+					};
+				},
+			},
+		];
+
+		// The page that loads itself again runs no checks.
+		if (!reloading) {
+			setUpChecks(cases);
+		}
+	</script>
+</body>
+</html>

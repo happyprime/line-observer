@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: option values</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		.gap {
+			height: 1200px;
+		}
+
+		.box.is-on {
+			border-color: #26c;
+			background: #e3edfb;
+		}
+
+		.box.undefined {
+			outline: 4px solid #b00;
+		}
+	</style>
+	<script>
+		// Runs before the library loads, so every warning it logs, and the
+		// rootMargin of every IntersectionObserver it creates, is kept.
+		window.warnings = [];
+		const nativeWarn = console.warn.bind(console);
+		console.warn = (...args) => {
+			window.warnings.push(args.join(' '));
+			nativeWarn(...args);
+		};
+
+		window.rootMargins = [];
+		const NativeIntersectionObserver = window.IntersectionObserver;
+		window.IntersectionObserver = function (callback, options) {
+			window.rootMargins.push(options.rootMargin);
+			return new NativeIntersectionObserver(callback, options);
+		};
+	</script>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Each box is registered from its <code>data-</code> attributes, as a block's front-end script would. A missing attribute is <code>undefined</code>. Each box should turn on when its top edge reaches its own line: 200px, 0px, or 50vh where its attribute is missing or invalid. Invalid values log one warning each.</p>
+		<nav>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>Errors from <code>register()</code>: <strong id="errors">0</strong>. Warnings: <strong id="warnings">0</strong>.</p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="gap"></div>
+		<section class="box" id="a" style="height: 300px" data-line-observer data-trigger-line="200">
+			<strong>A</strong>, <code>data-trigger-line="200"</code>: line at 200px
+		</section>
+		<div class="gap"></div>
+		<section class="box" id="b" style="height: 300px" data-line-observer data-trigger-line="0">
+			<strong>B</strong>, <code>data-trigger-line="0"</code>: line at the top
+		</section>
+		<div class="gap"></div>
+		<section class="box" id="c" style="height: 300px" data-line-observer data-near-margin="100">
+			<strong>C</strong>, <code>data-near-margin="100"</code>: line at 50vh
+		</section>
+		<div class="gap"></div>
+		<section class="box" id="d" style="height: 300px" data-line-observer data-trigger-line="1.2.3vh">
+			<strong>D</strong>, <code>data-trigger-line="1.2.3vh"</code>: invalid, line at 50vh
+		</section>
+		<div class="gap"></div>
+		<section class="box" id="e" style="height: 300px" data-line-observer>
+			<strong>E</strong>, no attributes: line at 50vh, class <code>is-active</code>
+		</section>
+		<div class="gap"></div>
+		<section class="box" id="f" style="height: 300px" data-line-observer data-trigger-line="25vh" data-active-class="is-on">
+			<strong>F</strong>, <code>data-trigger-line="25vh" data-active-class="is-on"</code>
+		</section>
+		<div class="gap"></div>
+		<section class="box" id="g" style="height: 300px" data-line-observer data-near-margin="-50">
+			<strong>G</strong>, <code>data-near-margin="-50"</code>: invalid, line at 50vh
+		</section>
+		<div class="gap"></div>
+	</main>
+
+	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
+	<script>
+		const { waitFrames, jump, rectOf, setUpChecks } = window.demoCheck;
+
+		const errors = [];
+		const observer = new LineObserver();
+
+		// Each block registers its own element, so one that throws leaves
+		// the others registered.
+		for (const element of document.querySelectorAll('[data-line-observer]')) {
+			const { triggerLine, nearMargin, activeClass, passedClass } = element.dataset;
+			try {
+				observer.register(element, { triggerLine, nearMargin, activeClass, passedClass });
+			} catch (error) {
+				errors.push(`${element.id}: ${error.name}`);
+			}
+		}
+
+		document.getElementById('errors').textContent = errors.length;
+		document.getElementById('warnings').textContent = window.warnings.length;
+
+		const vh = (percent) => (window.innerHeight * percent) / 100;
+
+		// Puts the element's top edge `offset` pixels below `line`.
+		const topAt = (element, line, offset) =>
+			jump(rectOf(element).top + window.scrollY - line - offset);
+
+		// Checks that the element is off 10px below its line and on 10px above it.
+		const activatesAt = (id, line, activeClass = 'is-active') => ({
+			name: `${id.toUpperCase()} turns on at ${Math.round(line())}px, with ${activeClass}`,
+			run: async () => {
+				const element = document.getElementById(id);
+				await topAt(element, line(), 150);
+				await topAt(element, line(), 10);
+				const below = [...element.classList].filter((name) => name !== 'box');
+				await topAt(element, line(), -10);
+				const above = [...element.classList].filter((name) => name !== 'box');
+				return {
+					expected: { below: [], above: [activeClass] },
+					actual: { below, above },
+				};
+			},
+		});
+
+		setUpChecks([
+			{
+				name: 'Every element registers, with one warning for each invalid attribute and sane rootMargins',
+				run: async () => {
+					await waitFrames();
+					// Each rootMargin is four lengths of whole px, none far
+					// outside the viewport but the edge observer's reach.
+					const sane = window.rootMargins.every((margin) =>
+						margin.split(' ').every((part) => /^-?\d+(\.\d+)?px$/.test(part) && (Math.abs(parseFloat(part)) <= 2 * window.innerHeight || parseFloat(part) === 10000000))
+					);
+					return {
+						expected: {
+							errors: [],
+							registered: 7,
+							warnings: [
+								'LineObserver: Invalid trigger line format "1.2.3vh", defaulting to 50vh',
+								'LineObserver: Invalid nearMargin "-50", defaulting to 100',
+							],
+							saneRootMargins: true,
+						},
+						actual: {
+							errors,
+							registered: observer.getTotalCount(),
+							warnings: window.warnings,
+							saneRootMargins: sane,
+						},
+					};
+				},
+			},
+			activatesAt('a', () => 200),
+			activatesAt('b', () => 0),
+			activatesAt('c', () => vh(50)),
+			activatesAt('d', () => vh(50)),
+			activatesAt('e', () => vh(50)),
+			activatesAt('f', () => vh(25), 'is-on'),
+			activatesAt('g', () => vh(50)),
+		]);
+	</script>
+</body>
+</html>

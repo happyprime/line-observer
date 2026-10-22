@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: progress</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		/* Scroll anchoring stays on, the browser default. */
+
+		.box {
+			position: relative;
+		}
+
+		.track {
+			position: relative;
+			height: 24px;
+			margin-top: 8px;
+			background: #ddd;
+		}
+
+		/* Both children move with the observed element's progress. */
+		.bar {
+			position: absolute;
+			inset: 0;
+			background: #087;
+			transform: scaleX(var(--scroll-progress, 0));
+			transform-origin: left;
+		}
+
+		.dot {
+			width: 24px;
+			height: 24px;
+			margin-top: 8px;
+			border-radius: 50%;
+			background: #c22;
+			transform: translateX(calc(var(--scroll-progress, 0) * 200px));
+		}
+
+		#inserted {
+			margin: 0 16px;
+			background: repeating-linear-gradient(45deg, #eee 0 10px, #fff 10px 20px);
+		}
+	</style>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Each box's bar and dot follow its <code>--scroll-progress</code>: 0 when the line meets the top edge, 1 at the bottom edge. A box past the line holds 1, and one below it holds 0. Insert content above the page with B on the line: scroll anchoring moves the page, B stays put, and so does its offset. Grow C while it is on the line, then scroll: its progress counts the new height.</p>
+		<nav>
+			<button type="button" id="toggle-insert">Insert 300px at the top</button>
+			<button type="button" id="toggle-grow">Grow C by 400px</button>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main id="main">
+		<div class="spacer"></div>
+		<section class="box" id="a" style="height: 600px">
+			<strong>A</strong>, 600px tall
+			<div class="readout">inactive</div>
+			<div class="track"><div class="bar"></div></div>
+			<div class="dot"></div>
+		</section>
+		<div class="spacer"></div>
+		<section class="box" id="b" style="height: 600px">
+			<strong>B</strong>, 600px tall
+			<div class="readout">inactive</div>
+			<div class="track"><div class="bar"></div></div>
+			<div class="dot"></div>
+		</section>
+		<div class="spacer"></div>
+		<section class="box" id="c" style="height: 600px">
+			<strong>C</strong>, 600px tall, or 1000px grown
+			<div class="readout">inactive</div>
+			<div class="track"><div class="bar"></div></div>
+			<div class="dot"></div>
+		</section>
+		<div class="spacer"></div>
+		<div class="spacer"></div>
+	</main>
+
+	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, depthOf, within, offsetOf, rectOf, triggerLine, setUpChecks } =
+			window.demoCheck;
+
+		const a = document.getElementById('a');
+		const b = document.getElementById('b');
+		const c = document.getElementById('c');
+		const main = document.getElementById('main');
+
+		const progressOf = (box) => {
+			const value = box.style.getPropertyValue('--scroll-progress');
+			return value === '' ? null : Number(value);
+		};
+
+		const show = (box) => {
+			box.querySelector('.readout').textContent =
+				`${box.classList.contains('is-active') ? 'active' : 'inactive'}, ` +
+				`--scroll-offset: ${offsetOf(box)}, --scroll-progress: ${progressOf(box)}`;
+		};
+
+		const observer = new LineObserver({ triggerLine: '50vh' });
+
+		for (const box of [a, b, c]) {
+			observer.register(box, {
+				onActivate: show,
+				onDeactivate: show,
+				onScroll: (offset, element) => show(element),
+			});
+		}
+
+		const insert = async () => {
+			const block = document.createElement('div');
+			block.id = 'inserted';
+			block.style.height = '300px';
+			main.prepend(block);
+			await waitFrames();
+		};
+
+		const removeInserted = async () => {
+			document.getElementById('inserted')?.remove();
+			await waitFrames();
+		};
+
+		document.getElementById('toggle-insert').addEventListener('click', () =>
+			document.getElementById('inserted') ? removeInserted() : insert()
+		);
+
+		document.getElementById('toggle-grow').addEventListener('click', () => {
+			c.style.height = c.offsetHeight === 600 ? '1000px' : '600px';
+		});
+
+		// Reads the scale or the move a child's transform shows.
+		const matrixOf = (element) => new DOMMatrixReadOnly(getComputedStyle(element).transform);
+
+		// What the box's position says, now, and what LineObserver wrote and
+		// the children show, each within half a pixel of the offset. A box
+		// past the line holds 1, and one below it holds 0.
+		const compare = (box) => {
+			const rect = rectOf(box);
+			const offset = Math.min(rect.height, Math.max(0, triggerLine() - rect.top));
+			const progress = offset / rect.height;
+			const tolerance = 0.5 / rect.height;
+			return {
+				expected: {
+					active: rect.top <= triggerLine() && rect.bottom > triggerLine(),
+					offset,
+					progress,
+					bar: progress,
+					dot: progress * 200,
+				},
+				actual: {
+					active: box.classList.contains('is-active'),
+					offset: within(offsetOf(box), offset),
+					progress: within(progressOf(box), progress, tolerance),
+					bar: within(matrixOf(box.querySelector('.bar')).a, progress, tolerance),
+					dot: within(matrixOf(box.querySelector('.dot')).e, progress * 200, tolerance * 200),
+				},
+			};
+		};
+
+		const reset = async () => {
+			await removeInserted();
+			c.style.height = '600px';
+			await jump(0);
+		};
+
+		setUpChecks([
+			{
+				name: 'Jump into the middle of B: progress matches the geometry',
+				run: async () => {
+					await reset();
+					await jump(lineInto(b, 300));
+					return compare(b);
+				},
+			},
+			{
+				name: 'Insert 300px above active B, with scroll anchoring on: the offset stays geometric',
+				run: async () => {
+					await reset();
+					await jump(lineInto(b, 340));
+					const before = { scrollY: window.scrollY, top: rectOf(b).top, depth: depthOf(b) };
+					await insert();
+					const after = { scrollY: window.scrollY, top: rectOf(b).top };
+					const values = compare(b);
+					const result = {
+						expected: { landed: 340, anchored: 300, moved: 0, ...values.expected, offset: before.depth },
+						actual: {
+							landed: within(before.depth, 340, 1),
+							anchored: within(after.scrollY - before.scrollY, 300),
+							moved: within(after.top - before.top, 0),
+							...values.actual,
+							offset: within(offsetOf(b), before.depth),
+						},
+					};
+					await removeInserted();
+					return result;
+				},
+			},
+			{
+				name: 'Pass A, then scroll back above it: progress holds 1, then 0',
+				run: async () => {
+					await reset();
+					await jump(lineInto(a, 300));
+					await jump(lineInto(a, 700));
+					const passed = compare(a);
+
+					// 60px steps up until the line is 100px above A's top edge.
+					for (let depth = 640; depth >= -100; depth -= 60) {
+						window.scrollTo({ top: lineInto(a, depth), behavior: 'instant' });
+						await waitFrames(2);
+					}
+					await waitFrames();
+
+					const above = compare(a);
+
+					return {
+						expected: {
+							passed: { ...passed.expected, offset: 600, progress: 1 },
+							above: { ...above.expected, offset: 0, progress: 0 },
+						},
+						actual: { passed: passed.actual, above: above.actual },
+					};
+				},
+			},
+			{
+				name: 'C grows 400px while active, then the page scrolls 50px: progress counts the new height',
+				run: async () => {
+					await reset();
+					await jump(lineInto(c, 300));
+					c.style.height = '1000px';
+					await waitFrames();
+					await jump(window.scrollY + 50);
+					const values = compare(c);
+					return {
+						expected: { ...values.expected, height: 1000 },
+						actual: {
+							...values.actual,
+							height: within(observer.instances.get(c).elementHeight, 1000),
+						},
+					};
+				},
+			},
+		]);
+	</script>
+</body>
+</html>

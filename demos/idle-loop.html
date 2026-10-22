@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: the loop at rest</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		/* Scroll anchoring would move the page to keep A in place. */
+		html,
+		body {
+			overflow-anchor: none;
+		}
+
+		#grow {
+			margin: 0 16px;
+			background: repeating-linear-gradient(45deg, #eee 0 10px, #fff 10px 20px);
+		}
+
+		.gap {
+			height: 300px;
+		}
+
+		.target {
+			position: relative;
+		}
+
+		/* An anchor target that puts the line 120px into B. */
+		#mark {
+			position: absolute;
+			top: calc(120px - 50vh);
+		}
+	</style>
+	<script>
+		// Counts the library's RAF callbacks. This runs before the library
+		// loads, so every frame it requests goes through here. The loop is
+		// shared by every observer on the page, so a frame is the library's
+		// when the library asked for it.
+		window.loopFrames = 0;
+		const nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
+		window.requestAnimationFrame = (callback) => {
+			const fromLibrary = /line-observer\.js/.test(new Error().stack || '');
+			return nativeRequestAnimationFrame((time) => {
+				if (fromLibrary) {
+					window.loopFrames++;
+				}
+				callback(time);
+			});
+		};
+	</script>
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Scroll A onto the line and stop: the loop should stop a few frames later, with A still active. A scroll, the link to B, or growing the content above A should each start it again, and it should stop again once the page is still.</p>
+		<nav>
+			<a href="#mark">Line 120px into B</a>
+			<button type="button" id="toggle-grow">Grow content above A</button>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>Loop: <strong id="loop">stopped</strong>. Library frames: <strong id="frames">0</strong>.</p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+		<div id="grow" style="height: 0"></div>
+		<section class="box" id="a" style="height: 500px">
+			<strong>A</strong>, 500px tall
+			<div class="readout">inactive</div>
+		</section>
+		<div class="gap"></div>
+		<div class="target">
+			<span id="mark"></span>
+			<section class="box" id="b" style="height: 500px">
+				<strong>B</strong>, 500px tall
+				<div class="readout">inactive</div>
+			</section>
+		</div>
+		<div class="spacer"></div>
+		<div class="spacer"></div>
+	</main>
+
+	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, depthOf, within, offsetOf, setUpChecks } = window.demoCheck;
+
+		const a = document.getElementById('a');
+		const b = document.getElementById('b');
+		const grow = document.getElementById('grow');
+
+		const show = (box) => {
+			box.querySelector('.readout').textContent = box.classList.contains('is-active')
+				? `active, --scroll-offset: ${offsetOf(box)}`
+				: 'inactive';
+		};
+
+		window.observer = new LineObserver({ triggerLine: '50vh' });
+
+		for (const box of [a, b]) {
+			window.observer.register(box, {
+				onActivate: show,
+				onDeactivate: show,
+				onScroll: (offset, element) => show(element),
+			});
+		}
+
+		// A timer, not a RAF loop, so the readout asks for no frames.
+		setInterval(() => {
+			document.getElementById('loop').textContent = window.observer.isActive()
+				? 'running'
+				: 'stopped';
+			document.getElementById('frames').textContent = window.loopFrames;
+		}, 100);
+
+		document.getElementById('toggle-grow').addEventListener('click', () => {
+			grow.style.height = grow.offsetHeight ? '0' : '800px';
+		});
+
+		// Waits up to 30 frames for the loop to stop. Returns the number of
+		// library frames it ran in that time.
+		const settle = async () => {
+			const start = window.loopFrames;
+			for (let i = 0; i < 30 && window.observer.isActive(); i++) {
+				await waitFrames(1);
+			}
+			return window.loopFrames - start;
+		};
+
+		// Runs `change` with the loop stopped, then reports whether the loop
+		// ran for it and stopped again.
+		const restartFor = async (change) => {
+			await settle();
+			const stoppedBefore = !window.observer.isActive();
+			const start = window.loopFrames;
+			await change();
+			await settle();
+			return {
+				stoppedBefore,
+				restarted: window.loopFrames > start,
+				stoppedAfter: !window.observer.isActive(),
+			};
+		};
+
+		const follow = async (hash) => {
+			history.replaceState(null, '', location.pathname + location.search);
+			document.querySelector(`a[href="${hash}"]`).click();
+			await waitFrames();
+		};
+
+		const restarted = { stoppedBefore: true, restarted: true, stoppedAfter: true };
+
+		// The page landed within 1px of putting the line `depth` pixels into
+		// the box, and its --scroll-offset is the distance measured now.
+		const offsets = (box, depth) => {
+			const measured = depthOf(box);
+			return {
+				expected: { landed: depth, offset: measured },
+				actual: { landed: within(measured, depth, 1), offset: within(offsetOf(box), measured) },
+			};
+		};
+
+		setUpChecks([
+			{
+				name: 'Scroll A onto the line and rest: the loop stops within a few frames',
+				run: async () => {
+					grow.style.height = '0';
+					await jump(lineInto(a, -150));
+					for (let depth = -100; depth <= 150; depth += 50) {
+						window.scrollTo({ top: lineInto(a, depth), behavior: 'instant' });
+						await waitFrames(1);
+					}
+
+					const framesToStop = await settle();
+					const start = window.loopFrames;
+					await waitFrames(30);
+					const aAt = offsets(a, 150);
+
+					return {
+						expected: {
+							aActive: true,
+							a: aAt.expected,
+							framesToStop: 'at most 4',
+							framesWhileStill: 0,
+						},
+						actual: {
+							aActive: a.classList.contains('is-active'),
+							a: aAt.actual,
+							framesToStop: framesToStop <= 4 ? 'at most 4' : framesToStop,
+							framesWhileStill: window.loopFrames - start,
+						},
+					};
+				},
+			},
+			{
+				name: 'Anchor link to B while stopped: the loop starts, B is active at 120',
+				run: async () => {
+					const loop = await restartFor(() => follow('#mark'));
+					const bAt = offsets(b, 120);
+					return {
+						expected: { ...restarted, aActive: false, bActive: true, b: bAt.expected },
+						actual: {
+							...loop,
+							aActive: a.classList.contains('is-active'),
+							bActive: b.classList.contains('is-active'),
+							b: bAt.actual,
+						},
+					};
+				},
+			},
+			{
+				name: 'Scroll 80px while stopped: the loop starts, B moves to 200',
+				run: async () => {
+					const loop = await restartFor(() =>
+						jump(lineInto(b, 200))
+					);
+					const bAt = offsets(b, 200);
+					return {
+						expected: { ...restarted, bActive: true, b: bAt.expected },
+						actual: {
+							...loop,
+							bActive: b.classList.contains('is-active'),
+							b: bAt.actual,
+						},
+					};
+				},
+			},
+			{
+				name: 'Content above A grows 800px while stopped: the loop starts, A leaves the line',
+				run: async () => {
+					grow.style.height = '0';
+					await jump(lineInto(a, 150));
+					const loop = await restartFor(async () => {
+						grow.style.height = '800px';
+						await waitFrames();
+					});
+					grow.style.height = '0';
+					return {
+						expected: { ...restarted, aActive: false, aOffset: 0 },
+						actual: {
+							...loop,
+							aActive: a.classList.contains('is-active'),
+							aOffset: offsetOf(a),
+						},
+					};
+				},
+			},
+		]);
+	</script>
+</body>
+</html>

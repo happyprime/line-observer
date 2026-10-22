@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: offset after a jump</title>
+	<link rel="stylesheet" href="css/check.css">
+</head>
+<body>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Jump onto a box. Its <code>--scroll-offset</code> should equal the distance from its top edge to the line, at once and without another scroll.</p>
+		<nav>
+			<a href="#a">Anchor: A</a>
+			<a href="#b">Anchor: B</a>
+			<button type="button" data-box="b" data-depth="350">Line 350px into B</button>
+			<button type="button" data-box="b" data-depth="50">Line 50px into B</button>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+		<section class="box" id="a" style="height: 600px">
+			<strong>A</strong>, 600px tall
+			<div class="readout">inactive</div>
+		</section>
+		<div class="spacer"></div>
+		<section class="box" id="b" style="height: 600px">
+			<strong>B</strong>, 600px tall
+			<div class="readout">inactive</div>
+		</section>
+		<div class="spacer"></div>
+	</main>
+
+	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, depthOf, within, offsetOf, triggerLine, setUpChecks } =
+			window.demoCheck;
+
+		const a = document.getElementById('a');
+		const b = document.getElementById('b');
+		const lastOnScroll = { a: null, b: null };
+
+		const show = (box) => {
+			const readout = box.querySelector('.readout');
+
+			if (!box.classList.contains('is-active')) {
+				readout.textContent = 'inactive';
+				return;
+			}
+
+			readout.textContent = `--scroll-offset: ${offsetOf(box)}. Line is ${depthOf(box)}px below the top edge.`;
+		};
+
+		const observer = new LineObserver({ triggerLine: '50vh' });
+
+		for (const box of [a, b]) {
+			observer.register(box, {
+				onActivate: show,
+				onDeactivate: show,
+				onScroll: (offset, element) => {
+					lastOnScroll[element.id] = offset;
+					show(element);
+				},
+			});
+		}
+
+		document.querySelectorAll('button[data-box]').forEach((button) => {
+			button.addEventListener('click', () => {
+				const box = document.getElementById(button.dataset.box);
+				const top = lineInto(box, Number(button.dataset.depth));
+				window.scrollTo({ top, behavior: 'instant' });
+			});
+		});
+
+		const reset = () => {
+			lastOnScroll.a = null;
+			lastOnScroll.b = null;
+		};
+
+		// The page landed within 1px of putting the line `depth` pixels into
+		// the box, and each value LineObserver gives is the distance from the
+		// box's top edge to the line, measured now.
+		const offsets = (box, depth) => {
+			const measured = depthOf(box);
+			return {
+				expected: {
+					landed: depth,
+					active: true,
+					offset: measured,
+					onScroll: measured,
+					instanceOffset: measured,
+				},
+				actual: {
+					landed: within(measured, depth, 1),
+					active: box.classList.contains('is-active'),
+					offset: within(offsetOf(box), measured),
+					onScroll: within(lastOnScroll[box.id], measured),
+					instanceOffset: within(observer.instances.get(box).offset, measured),
+				},
+			};
+		};
+
+		const steps = async (count, size) => {
+			for (let i = 0; i < count; i++) {
+				window.scrollBy({ top: size, behavior: 'instant' });
+				await waitFrames(2);
+			}
+			await waitFrames();
+		};
+
+		setUpChecks([
+			{
+				name: 'Jump down: line 350px into B',
+				run: async () => {
+					await jump(0);
+					reset();
+					await jump(lineInto(b, 350));
+					return offsets(b, 350);
+				},
+			},
+			{
+				name: 'Jump up from below B: line 50px into B',
+				run: async () => {
+					await jump(lineInto(b, 1100));
+					reset();
+					await jump(lineInto(b, 50));
+					return offsets(b, 50);
+				},
+			},
+			{
+				name: 'Anchor link to B: top edge at the top of the viewport',
+				run: async () => {
+					await jump(0);
+					history.replaceState(null, '', location.pathname + location.search);
+					reset();
+					document.querySelector('a[href="#b"]').click();
+					await waitFrames();
+					return offsets(b, triggerLine());
+				},
+			},
+			{
+				name: 'Scroll down in 30px steps across the top edge of A',
+				run: async () => {
+					// A's top edge starts 80px below the line, inside the IO band.
+					await jump(lineInto(a, -80));
+					reset();
+					await steps(5, 30);
+					return offsets(a, 70);
+				},
+			},
+			{
+				name: 'Scroll up in 30px steps across the bottom edge of B',
+				run: async () => {
+					// B's bottom edge starts 80px above the line, inside the IO band.
+					await jump(lineInto(b, 680));
+					reset();
+					await steps(5, -30);
+					return offsets(b, 530);
+				},
+			},
+		]);
+	</script>
+</body>
+</html>
