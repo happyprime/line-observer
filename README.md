@@ -1,12 +1,28 @@
 # LineObserver
 
-A performant scroll interaction observer that triggers handlers when elements cross a configurable "trigger line" in the viewport.
+LineObserver adds a class and calls your functions when an element crosses a line across the viewport. Every observer on the page shares one `requestAnimationFrame` loop, which reads every element before it writes to any, and stops when the page is still.
 
-- One `requestAnimationFrame` loop for every observer on the page, which stops when the page is still
-- Batched DOM read/write operations via IntersectionObserver + RAF
-- Configurable trigger line per instance (px, %, vh, vw)
-- Bidirectional scroll support with consistent offset values
-- Sets `--scroll-offset` and `--scroll-progress` CSS custom properties on observed elements by default
+## Native CSS first
+
+LineObserver complements CSS scroll-driven animations. It does not replace them.
+
+**Use native CSS** for an effect scrubbed to the scroll position, such as parallax or a progress bar. `animation-timeline: view()` or `scroll()`, with `animation-range`, needs no JavaScript, and the browser can run it off the main thread.
+
+**Use LineObserver** when something should happen as an element crosses a line:
+
+- add a class, or call a function;
+- reveal an element once and leave it shown, where a `view()` animation would play backwards as the page scrolls back up;
+- send an analytics event, or start and stop a video, which CSS can't do;
+- act on the scroll direction, with `activateFrom` or `getDirection()`;
+- fall back where `animation-timeline` is missing. See [Parallax, native first](#parallax-native-first).
+
+`animation-timeline` is supported in:
+
+- Chrome and Edge 115, July 2023.
+- Safari 26.0, September 2025.
+- Firefox 159, due 27 October 2026. Firefox 110 to 158 have it behind the `layout.css.scroll-driven-animations.enabled` pref, off by default. MDN's compatibility data says 159; caniuse lists 161.
+
+Scroll-triggered animations (`animation-trigger`), which start a timed animation at a scroll position, are only in Chrome and Edge 146 and later. A transition on `.is-active` does the same in every browser.
 
 ## Installation
 
@@ -87,35 +103,296 @@ A theme built with `@wordpress/scripts` can import the package instead and enque
 ```
 
 ```css
-/* The start state. */
 .observed__inner {
-  opacity: 0.3;
+  border-left: 4px solid transparent;
+  transition: border-color 0.3s;
+}
+
+/* On while the section spans the line, which sits at 50vh by default. */
+.observed.is-active .observed__inner {
+  border-color: currentColor;
 }
 ```
 
 ```js
-const observer = new LineObserver({
-  triggerLine: '50vh',
-  cssCustomProperty: false, // Callbacks only, so skip the custom properties.
+const observer = new LineObserver();
+
+document.querySelectorAll('.observed').forEach((element) => {
+  observer.register(element, {
+    onActivate: () => console.log('Active', element),
+    onDeactivate: () => console.log('Inactive', element),
+  });
 });
+```
 
-document.querySelectorAll('.observed').forEach((el) => {
-  const inner = el.querySelector('.observed__inner');
+`is-active` is on while the section spans the line, and `is-passed` once its bottom edge is above it. `onActivate` and `onDeactivate` run as `is-active` goes on and off. A section that a jump or a fast scroll takes straight across the line, or that is past it when the page loads, gets both, one after the other.
 
-  observer.register(el, {
-    onActivate: (element) => console.log('Activated', element),
-    onDeactivate: (element) => console.log('Deactivated', element),
-    onScroll: (offset) => {
-      // 0.3 at the line, 1 from 200px past it.
-      inner.style.opacity = 0.3 + 0.7 * Math.min(1, offset / 200);
+For a card that fades in, see [Reveal once](#reveal-once). A page can use several observers; they share one loop.
+
+## Recipes
+
+The recipes style a child of the observed element, never the element itself. LineObserver measures the element with `getBoundingClientRect()`, which includes transforms, so moving it moves the box being measured, and its state can flip back and forth near the line.
+
+The recipes share one observer, and a class on `<html>` that turns on their hidden start states. [No-JS fallback](#no-js-fallback) says why the script adds it.
+
+```js
+const observer = new LineObserver();
+
+document.documentElement.classList.add('has-line-observer');
+```
+
+### Reveal once
+
+```html
+<section class="reveal">
+  <div class="reveal__inner">…</div>
+</section>
+```
+
+```css
+.has-line-observer .reveal__inner {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.4s, transform 0.4s;
+}
+
+.has-line-observer .reveal.is-active .reveal__inner {
+  opacity: 1;
+  transform: none;
+}
+```
+
+```js
+document.querySelectorAll('.reveal').forEach((element) => {
+  observer.register(element, { once: true });
+});
+```
+
+`once: true` adds `is-active` the first time the element reaches the line, then stops observing it, so the class stays when the page scrolls back up. An element already past the line, when the page loads or after a jump, is revealed at once. An element added to the page later needs its own `register()`.
+
+Without `once`, `is-active` comes off when the element's bottom edge passes the line. Style `is-passed` too, to keep the content shown past the line. Scrolled back below the line, it hides again.
+
+```css
+.has-line-observer .reveal.is-passed .reveal__inner {
+  opacity: 1;
+  transform: none;
+}
+```
+
+### Progress
+
+`--scroll-progress` is 0 when the line meets the element's top edge and 1 when it meets the bottom edge. It holds 1 past the line and 0 below it. Here it fills a bar that sticks to the top of the viewport while the article scrolls by:
+
+```html
+<article class="story">
+  <div class="story__bar"></div>
+  …
+</article>
+```
+
+```css
+.story__bar {
+  position: sticky;
+  top: 0;
+  height: 4px;
+  background: currentColor;
+  transform: scaleX(var(--scroll-progress, 0));
+  transform-origin: left;
+}
+```
+
+```js
+document.querySelectorAll('.story').forEach((element) => {
+  observer.register(element);
+});
+```
+
+Where `animation-timeline` is supported, CSS can fill the same bar with no JavaScript. [Parallax, native first](#parallax-native-first) shows how to use both.
+
+### Stagger
+
+Observe the list, not each card, so the cards start together and a delay sets their order:
+
+```html
+<ul class="cards">
+  <li class="card">…</li>
+  <li class="card">…</li>
+  <li class="card">…</li>
+</ul>
+```
+
+```css
+.has-line-observer .card {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity 0.4s, transform 0.4s;
+  transition-delay: calc(var(--i, 0) * 100ms);
+}
+
+.has-line-observer .cards.is-active .card {
+  opacity: 1;
+  transform: none;
+}
+```
+
+```js
+document.querySelectorAll('.cards').forEach((element) => {
+  observer.register(element, {
+    once: true,
+    onActivate: () => {
+      element.querySelectorAll('.card').forEach((card, index) => {
+        card.style.setProperty('--i', index);
+      });
     },
   });
 });
 ```
 
-`onScroll` runs when an element activates, in each frame it moves while active, and once more as it leaves, with the offset it holds: its height past the line, `0` below it. So the child ends at full opacity past the line, also when the page loads past it, and goes back to 0.3 below it.
+`onActivate` runs right after LineObserver adds `is-active`, before the browser starts the transitions, so each card starts with its delay. To set the order in the markup instead, give each card its index, as in `style="--i: 2"`.
 
-A page can use several observers. They share one loop, which reads every element before it writes to any.
+### Parallax, native first
+
+Where `animation-timeline` is supported, CSS moves the image and LineObserver isn't used. Elsewhere, `--scroll-progress` moves it the same distance at each scroll position.
+
+```html
+<section class="parallax">
+  <img class="parallax__media" src="…" alt="">
+</section>
+```
+
+```css
+@keyframes parallax {
+  from {
+    transform: translateY(-40px);
+  }
+
+  to {
+    transform: translateY(40px);
+  }
+}
+
+@supports (animation-timeline: view()) {
+  .parallax {
+    view-timeline: --parallax;
+    view-timeline-inset: 50%;
+  }
+
+  .parallax__media {
+    animation: parallax linear both;
+    animation-timeline: --parallax;
+  }
+}
+
+@supports not (animation-timeline: view()) {
+  .parallax__media {
+    transform: translateY(calc(var(--scroll-progress, 0) * 80px - 40px));
+  }
+}
+```
+
+```js
+if (!CSS.supports('animation-timeline', 'view()')) {
+  document.querySelectorAll('.parallax').forEach((element) => {
+    observer.register(element);
+  });
+}
+```
+
+`view-timeline-inset: 50%` shrinks the view to a line across the middle of the viewport. The timeline then runs from the section's top edge reaching that line to its bottom edge passing it: the span of `--scroll-progress` with the default `50vh` line. The section is the subject of both, so both measure the same box. `animation-timeline` comes after the `animation` shorthand, which resets it.
+
+The section needs `overflow: hidden`, and the image 80px more height than the section, so its edges never show.
+
+### Reduced motion
+
+Keep the fades and drop the movement. Put this after the rules it overrides: it uses the same selectors, so the later rule wins.
+
+```css
+@media (prefers-reduced-motion: reduce) {
+  .has-line-observer .reveal__inner,
+  .has-line-observer .card {
+    transform: none;
+  }
+
+  .parallax__media {
+    animation: none;
+    transform: none;
+  }
+}
+```
+
+Motion that a script starts needs a check before it registers. This clip plays while it spans the line, unless the visitor asks for less motion:
+
+```html
+<figure class="clip">
+  <video src="…" muted playsinline loop></video>
+</figure>
+```
+
+```js
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+if (!reduceMotion.matches) {
+  document.querySelectorAll('.clip').forEach((element) => {
+    const video = element.querySelector('video');
+
+    observer.register(element, {
+      onActivate: () => video.play().catch(() => {}),
+      onDeactivate: () => video.pause(),
+    });
+  });
+}
+```
+
+`play()` rejects when `pause()` follows at once, as it does for a clip already past the line at load, and when the browser blocks autoplay. The `catch()` keeps that out of the console. `muted` lets the browser play it without a click. The check runs once, so a visitor who changes the setting sees the change on the next load.
+
+### No-JS fallback
+
+Content must show if the script never runs: JavaScript is off, `line-observer.js` is blocked or fails to load, or an error stops the script before it registers anything. So each hidden start state above sits under `has-line-observer`, which the script adds to `<html>` once `new LineObserver()` has worked. If anything before that fails, the class never goes on, and the content shows.
+
+The usual `js` class, set by an inline script in the `<head>`, says only that JavaScript runs. With `line-observer.js` blocked, it would leave the content hidden for good.
+
+Add the class in the same script that registers the elements. An element already past the line then gets `is-active` before the browser paints it hidden. The cost: if the browser paints before the script runs, as it can with `defer`, content between the line and the bottom of the viewport shows, fades out when the class goes on, and fades back in as it reaches the line.
+
+### WordPress blocks
+
+A block's front-end script can read its options from `data-` attributes. A missing attribute gives `undefined`, which keeps the default, and a string of digits counts as a number, so `data-trigger-line="200"` is a 200px line.
+
+```html
+<div class="wp-block-theme-callout" data-trigger-line="30vh" data-once>
+  <div class="wp-block-theme-callout__inner">…</div>
+</div>
+```
+
+```js
+document.querySelectorAll('.wp-block-theme-callout').forEach((element) => {
+  observer.register(element, {
+    triggerLine: element.dataset.triggerLine,
+    nearMargin: element.dataset.nearMargin,
+    once: element.hasAttribute('data-once'),
+  });
+});
+```
+
+Read a boolean from whether the attribute is there. `element.dataset.once` is a string: `'false'` is truthy and would turn `once` on, and the empty string from a bare `data-once` is falsy and would turn it off. Write `data-once` into the markup only when the option is on.
+
+## Upgrading from 0.0.1
+
+`"^0.0.1"` in `package.json` doesn't match 0.2.0: a caret on a 0.0.x version allows only that version. Change it to `"^0.2.0"`.
+
+What changes for code written against 0.0.1:
+
+- **`instance.activationScrollY` is gone.** Read `instance.offset`, or `instance.progress` for `offset / elementHeight`.
+- **The offset comes from the element's position:** the distance from its top edge to the line, from 0 to its height. 0.0.1 counted pixels scrolled since the element activated, so it ignored how far a jump took the element past the line, and moved when scroll anchoring moved the page.
+- **The end value is held.** An element that leaves the active zone keeps an offset equal to its height and progress 1 past the line, or 0 and 0 below it. `onScroll` gets that value once, before `onDeactivate`. 0.0.1 set `--scroll-offset` to 0 either way, so a child styled from it snapped back to its start state past the line.
+- **`onScroll` runs at `register()`** for an element already across the line, and on the frame an element activates. After that it runs in each frame in which the offset or progress changes, not in each frame the page scrolls.
+- **Elements past the line get `onActivate`.** At `register()`, as on a page reloaded partway down, and when a jump, a fast scroll or a layout change takes an element across the line between two frames, it gets `onActivate`, `onScroll` and `onDeactivate`, in that order. `register()` ignores `activateFrom`, so this happens with `'below'` too. 0.0.1 gave these elements nothing. Code that handles elements already past the line itself now runs a second time: remove it, or make sure it can run twice.
+- **`is-passed` is new.** It is on while the element is past the line. Set `passedClass` if your CSS uses `is-passed` for something else.
+- **One loop for every observer.** Observers share one `requestAnimationFrame` loop, one `scroll` listener and one `resize` listener. The loop stops two frames after the page comes to rest, even with elements active, so `isActive()` returns `false` at rest. `tick()` and `handleResize()` are gone.
+- **An error in a callback is reported, not thrown.** It goes to `reportError()`, which fires the window `error` event, and the loop keeps running.
+- **Option values are checked.** An option set to `undefined` keeps its default; in 0.0.1 it replaced it, and `nearMargin: undefined` made `register()` throw. `triggerLine: '200'` is 200px; 0.0.1 fell back to `50vh`.
+- **A resize is filtered by `activateFrom`,** with the direction of the last scroll, and does nothing when the viewport size hasn't changed.
+
+New, and safe to ignore: `once`, `instance.offset`, `instance.progress` and `--scroll-progress`. `--scroll-progress` is written wherever `--scroll-offset` is, and inherits too: see [What the properties cost](#what-the-properties-cost).
 
 ## Constructor options
 
@@ -323,41 +600,6 @@ A resize that moves the line across an element, such as a phone's toolbar showin
 
 Known limit: with `'below'` or `'above'`, a layout change at rest, such as content above the element growing, is filtered with the direction of the last scroll. That direction has nothing to do with the layout change, so the element can miss an activation or stay active past the line.
 
-## Reveal once
-
-For a reveal that runs once, register with `once: true` and put a CSS transition on `.is-active`. LineObserver adds the class the first time the element reaches the line, or finds it past the line, and then stops observing it. The class stays, so scrolling back up does not hide the content again.
-
-```html
-<section class="reveal">
-  <div class="reveal__inner">…</div>
-</section>
-```
-
-```css
-.reveal__inner {
-  opacity: 0;
-  transform: translateY(16px);
-  transition: opacity 0.4s, transform 0.4s;
-}
-
-.reveal.is-active .reveal__inner {
-  opacity: 1;
-  transform: none;
-}
-```
-
-```js
-document.querySelectorAll('.reveal').forEach((element) => {
-  observer.register(element, { once: true });
-});
-```
-
-Elements above the line when the page loads, or put above it by a jump or by content added above them, are revealed too. An element you add to the page needs its own `register()` call.
-
-Transition a child, not the observed element. LineObserver measures the element's box, which a transform moves.
-
-A revealed element is no longer observed. `getTotalCount()` does not count it, `unregister()` and `destroy()` leave its class and values alone, and LineObserver keeps no reference to it.
-
 ## The --scroll-offset CSS custom property
 
 When `cssCustomProperty` is `true` (the default), LineObserver sets `--scroll-offset` on each element when it activates, and in each frame in which it moves while active. The value is the distance in pixels from the element's top edge to the trigger line, so an element that activates after a jump starts at the distance already crossed, not at 0.
@@ -366,7 +608,7 @@ The offset comes from the element's position, not from `window.scrollY`. Scroll 
 
 The value is a number with no unit. Multiply it to get a length: `calc(var(--scroll-offset, 0) * 1px)`. A bare `translateX(var(--scroll-offset))` is invalid, so the transform computes to `none`.
 
-Style a child of the observed element, and give the base rule the start state. With the quick start's markup:
+Style a child of the observed element, and give the base rule the start state. This example is scrubbed to the scroll position, so where `animation-timeline` is supported, CSS can do it alone: see [Parallax, native first](#parallax-native-first). With the quick start's markup:
 
 ```css
 /* At the line: 0.3 opacity, in place. From 200px past it: full opacity, 60px up. */
@@ -382,25 +624,7 @@ When the element leaves the active zone, the property holds the value it left wi
 
 ### --scroll-progress
 
-LineObserver also sets `--scroll-progress`: `0` when the line meets the element's top edge, `1` when it meets the bottom edge. It is `--scroll-offset` divided by the element's height, and the height is read with the offset, so it stays right when the element grows. Like the offset, it holds `1` past the line and `0` below it.
-
-Style a child of the observed element with it:
-
-```html
-<section class="observed">
-  <div class="observed__bar"></div>
-</section>
-```
-
-```css
-/* Fills from left to right as the line crosses the section. */
-.observed__bar {
-  height: 4px;
-  background: currentColor;
-  transform: scaleX(var(--scroll-progress, 0));
-  transform-origin: left;
-}
-```
+LineObserver also sets `--scroll-progress`: `0` when the line meets the element's top edge, `1` when it meets the bottom edge. It is `--scroll-offset` divided by the element's height, and the height is read with the offset, so it stays right when the element grows. Like the offset, it holds `1` past the line and `0` below it. [Progress](#progress) fills a bar with it.
 
 ### What the properties cost
 
