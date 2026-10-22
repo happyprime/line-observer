@@ -54,15 +54,16 @@
 		<div class="spacer"></div>
 	</main>
 
+	<script src="js/check.js"></script>
+
 	<!-- From the README's "Script tag" section. -->
 	<script src="../build/line-observer.js"></script>
 	<script>
 		const observer = new LineObserver();
 	</script>
 
-	<script src="js/check.js"></script>
 	<script>
-		const { waitFrames, jump, lineInto, offsetOf, setUpChecks } = window.demoCheck;
+		const { waitFrames, jump, lineInto, depthOf, within, offsetOf, setUpChecks } = window.demoCheck;
 
 		const section = document.getElementById('observed');
 		const inner = section.querySelector('.observed__inner');
@@ -135,14 +136,22 @@
 				run: async () => {
 					await jump(lineInto(section, -100));
 					await jump(lineInto(section, 100));
+					const depth = depthOf(section);
 					const style = getComputedStyle(inner);
+
+					// The child's CSS, for the measured depth. Each value
+					// must be within what half a pixel of offset moves it.
+					const opacity = Math.min(1, Math.max(0.3, depth / 200));
+					const translateY = Math.min(depth, 200) * -0.3;
+
 					return {
-						expected: { active: true, offset: 100, opacity: 0.5, transform: 'matrix(1, 0, 0, 1, 0, -30)' },
+						expected: { landed: 100, active: true, offset: depth, opacity, translateY },
 						actual: {
+							landed: within(depth, 100, 1),
 							active: section.classList.contains('is-active'),
-							offset: offsetOf(section),
-							opacity: Number(style.opacity),
-							transform: style.transform,
+							offset: within(offsetOf(section), depth),
+							opacity: within(Number(style.opacity), opacity, 0.5 / 200),
+							translateY: within(new DOMMatrixReadOnly(style.transform).m42, translateY, 0.5 * 0.3),
 						},
 					};
 				},

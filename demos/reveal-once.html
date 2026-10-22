@@ -147,8 +147,8 @@
 			document.getElementById('pool').append(card(id, `${id}, added by the filter`));
 		}
 	</script>
-	<script src="../build/line-observer.js"></script>
 	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
 	<script>
 		const { waitFrames, jump, lineInto, rectOf, triggerLine, setUpChecks } = window.demoCheck;
 
@@ -235,6 +235,8 @@
 				name: 'Flick through 38 headings at 100px a frame: all revealed',
 				run: async () => {
 					const headings = document.getElementById('headings');
+					const all = ids('.heading');
+					all.forEach((id) => revealed.delete(id));
 					await jump(lineInto(headings, -300));
 					const end = lineInto(headings, headings.offsetHeight + 300);
 					for (let last = -1; window.scrollY < end && window.scrollY !== last; ) {
@@ -243,7 +245,6 @@
 						await waitFrames(1);
 					}
 					await waitFrames();
-					const all = ids('.heading');
 					return {
 						expected: { activated: all.length, withClass: all.length },
 						actual: {

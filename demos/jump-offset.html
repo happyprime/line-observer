@@ -35,10 +35,10 @@
 		<div class="spacer"></div>
 	</main>
 
-	<script src="../build/line-observer.js"></script>
 	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
 	<script>
-		const { waitFrames, jump, lineInto, offsetOf, rectOf, triggerLine, setUpChecks } =
+		const { waitFrames, jump, lineInto, depthOf, within, offsetOf, triggerLine, setUpChecks } =
 			window.demoCheck;
 
 		const a = document.getElementById('a');
@@ -53,8 +53,7 @@
 				return;
 			}
 
-			const depth = Math.round(triggerLine() - rectOf(box).top);
-			readout.textContent = `--scroll-offset: ${offsetOf(box)}. Line is ${depth}px below the top edge.`;
+			readout.textContent = `--scroll-offset: ${offsetOf(box)}. Line is ${depthOf(box)}px below the top edge.`;
 		};
 
 		const observer = new LineObserver({ triggerLine: '50vh' });
@@ -64,7 +63,7 @@
 				onActivate: show,
 				onDeactivate: show,
 				onScroll: (offset, element) => {
-					lastOnScroll[element.id] = Math.round(offset);
+					lastOnScroll[element.id] = offset;
 					show(element);
 				},
 			});
@@ -83,21 +82,28 @@
 			lastOnScroll.b = null;
 		};
 
-		const actual = (box) => ({
-			active: box.classList.contains('is-active'),
-			offset: offsetOf(box),
-			onScroll: lastOnScroll[box.id],
-			instanceOffset: Math.round(observer.instances.get(box).offset),
-		});
-
-		// The line `depth` pixels into the box. The instance's offset is the
-		// distance from the box's top edge to the line, measured now.
-		const expected = (box, depth) => ({
-			active: true,
-			offset: depth,
-			onScroll: depth,
-			instanceOffset: Math.round(triggerLine() - rectOf(box).top),
-		});
+		// The page landed within 1px of putting the line `depth` pixels into
+		// the box, and each value LineObserver gives is the distance from the
+		// box's top edge to the line, measured now.
+		const offsets = (box, depth) => {
+			const measured = depthOf(box);
+			return {
+				expected: {
+					landed: depth,
+					active: true,
+					offset: measured,
+					onScroll: measured,
+					instanceOffset: measured,
+				},
+				actual: {
+					landed: within(measured, depth, 1),
+					active: box.classList.contains('is-active'),
+					offset: within(offsetOf(box), measured),
+					onScroll: within(lastOnScroll[box.id], measured),
+					instanceOffset: within(observer.instances.get(box).offset, measured),
+				},
+			};
+		};
 
 		const steps = async (count, size) => {
 			for (let i = 0; i < count; i++) {
@@ -114,7 +120,7 @@
 					await jump(0);
 					reset();
 					await jump(lineInto(b, 350));
-					return { expected: expected(b, 350), actual: actual(b) };
+					return offsets(b, 350);
 				},
 			},
 			{
@@ -123,7 +129,7 @@
 					await jump(lineInto(b, 1100));
 					reset();
 					await jump(lineInto(b, 50));
-					return { expected: expected(b, 50), actual: actual(b) };
+					return offsets(b, 50);
 				},
 			},
 			{
@@ -134,8 +140,7 @@
 					reset();
 					document.querySelector('a[href="#b"]').click();
 					await waitFrames();
-					const depth = Math.round(triggerLine());
-					return { expected: expected(b, depth), actual: actual(b) };
+					return offsets(b, triggerLine());
 				},
 			},
 			{
@@ -145,7 +150,7 @@
 					await jump(lineInto(a, -80));
 					reset();
 					await steps(5, 30);
-					return { expected: expected(a, 70), actual: actual(a) };
+					return offsets(a, 70);
 				},
 			},
 			{
@@ -155,7 +160,7 @@
 					await jump(lineInto(b, 680));
 					reset();
 					await steps(5, -30);
-					return { expected: expected(b, 530), actual: actual(b) };
+					return offsets(b, 530);
 				},
 			},
 		]);

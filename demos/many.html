@@ -144,8 +144,8 @@
 			document.getElementById('boxes').append(box);
 		}
 	</script>
-	<script src="../build/line-observer.js"></script>
 	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
 	<script>
 		const { waitFrames, jump, setUpChecks } = window.demoCheck;
 
@@ -209,6 +209,9 @@
 
 		const bottom = () => document.documentElement.scrollHeight - window.innerHeight;
 
+		// Empties every box's list, so a case reads only its own callbacks.
+		const clearEvents = () => events.forEach((list) => (list.length = 0));
+
 		const patternOf = (box) => events.get(box.id).map(({ type }) => type).join('');
 
 		// Boxes whose callbacks don't match `pattern`, or `pattern` for once boxes.
@@ -249,6 +252,7 @@
 				name: 'Down through all 300 at 150px a frame: each activates, then deactivates, in order, with no read after a write in a frame',
 				run: async () => {
 					await jump(0);
+					clearEvents();
 					window.frameLog.length = 0;
 					await scrollThrough(bottom(), 150);
 					return {
@@ -272,6 +276,7 @@
 			{
 				name: 'Back up to the top: each again in reverse order, and once boxes stay revealed',
 				run: async () => {
+					clearEvents();
 					window.frameLog.length = 0;
 					await scrollThrough(0, -150);
 					return {
@@ -284,9 +289,9 @@
 							observed: COUNT - 30,
 						},
 						actual: {
-							badPatterns: badPatterns(/^AS+DAS+D$/, /^AS$/),
-							activatedOutOfOrder: outOfOrder('A', 1, -1, boxes.filter(notOnce)),
-							deactivatedOutOfOrder: outOfOrder('D', 1, -1, boxes.filter(notOnce)),
+							badPatterns: badPatterns(/^AS+D$/, /^$/),
+							activatedOutOfOrder: outOfOrder('A', 0, -1, boxes.filter(notOnce)),
+							deactivatedOutOfOrder: outOfOrder('D', 0, -1, boxes.filter(notOnce)),
 							framesWithLateReads: framesWithLateReads(),
 							stillClassed: boxes.filter((box) => box.classList.contains('is-active')).length,
 							observed: observers.reduce((sum, observer) => sum + observer.getTotalCount(), 0),
@@ -297,23 +302,23 @@
 			{
 				name: 'Destroy the 50vh observer, then down again: the other two still work',
 				run: async () => {
+					clearEvents();
 					observers[1].destroy();
 					const left = boxes.filter((box) => box.dataset.observer !== '1');
 					const gone = boxes.filter((box) => box.dataset.observer === '1');
-					const goneBefore = gone.map(patternOf).join();
 					await scrollThrough(bottom(), 150);
 					return {
 						expected: {
 							badPatterns: [],
 							activatedOutOfOrder: [],
-							goneUnchanged: true,
+							goneCalled: [],
 							goneClassed: gone.filter((box) => box.dataset.once === 'true').length,
 							intersectionObservers: 6,
 						},
 						actual: {
-							badPatterns: badPatterns(/^AS+DAS+DAS+D$/, /^AS$/, left),
-							activatedOutOfOrder: outOfOrder('A', 2, 1, left.filter(notOnce)),
-							goneUnchanged: gone.map(patternOf).join() === goneBefore,
+							badPatterns: badPatterns(/^AS+D$/, /^$/, left),
+							activatedOutOfOrder: outOfOrder('A', 0, 1, left.filter(notOnce)),
+							goneCalled: badPatterns(/^$/, /^$/, gone),
 							goneClassed: gone.filter(
 								(box) => box.classList.contains('is-active') || box.classList.contains('is-passed')
 							).length,
