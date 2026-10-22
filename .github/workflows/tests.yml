@@ -2,6 +2,11 @@ name: JavaScript tests
 
 on:
   pull_request:
+    # A change to another workflow file is no reason to run this one.
+    paths:
+      - '**'
+      - '!.github/workflows/**'
+      - .github/workflows/tests.yml
 
 jobs:
   test:
