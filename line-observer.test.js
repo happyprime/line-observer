@@ -3802,6 +3802,44 @@ describe('a callback that throws', () => {
 	});
 });
 
+describe('this in a callback', () => {
+	it("should be the element's merged options, as in 0.0.1", () => {
+		const observer = new LineObserver({
+			triggerLine: '50vh',
+			activeClass: 'in-view',
+		});
+		const element = document.createElement('div');
+		document.body.append(element);
+		const receivers = [];
+
+		// Past the line at register(), so all three callbacks run.
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top: 100, bottom: 400 });
+		observer.register(element, {
+			onActivate() {
+				receivers.push(['onActivate', this]);
+			},
+			onScroll() {
+				receivers.push(['onScroll', this]);
+			},
+			onDeactivate() {
+				receivers.push(['onDeactivate', this.activeClass]);
+			},
+		});
+
+		const { options } = observer.instances.get(element);
+		expect(receivers).toEqual([
+			['onActivate', options],
+			['onScroll', options],
+			['onDeactivate', 'in-view'],
+		]);
+		expect(receivers[0][1]).toBe(options);
+		expect(receivers[1][1]).toBe(options);
+		element.remove();
+	});
+});
+
 describe('a callback that unregisters or destroys', () => {
 	let observer;
 	let a;
@@ -4328,6 +4366,75 @@ describe('offset and progress from the position', () => {
 			expect(values()).toEqual({ offset: '0', progress: '0' });
 		});
 
+		it("should hold 0 below the line after 'below' kept it from activating on the way back", () => {
+			const onActivate = vi.fn();
+
+			// A 200px element, 100px below the line.
+			place(600, 800);
+			observer.register(element, { activateFrom: 'below', onActivate, onScroll });
+			report();
+			tick(observer);
+
+			scrollWindowTo(200);
+			place(400, 600);
+			tick(observer);
+			expect(values()).toEqual({ offset: '100', progress: '0.5' });
+
+			scrollWindowTo(350);
+			place(250, 450);
+			tick(observer);
+			expect(values()).toEqual({ offset: '200', progress: '1' });
+
+			// Back up onto it: 'below' keeps it passed, holding 1.
+			scrollWindowTo(200);
+			place(400, 600);
+			tick(observer);
+			expect(observer.instances.get(element).state).toBe('passed');
+			expect(values()).toEqual({ offset: '200', progress: '1' });
+
+			// On until it is below the line.
+			log = [];
+			scrollWindowTo(0);
+			place(600, 800);
+			tick(observer);
+
+			const instance = observer.instances.get(element);
+			expect(instance.state).toBe('inactive');
+			expect(instance.offset).toBe(0);
+			expect(instance.progress).toBe(0);
+			expect(values()).toEqual({ offset: '0', progress: '0' });
+			expect(log).toEqual(['onScroll 0 0']);
+			expect(onActivate).toHaveBeenCalledTimes(1);
+		});
+
+		it("should hold the height past the line after 'above' kept it from activating on the way down", () => {
+			const onActivate = vi.fn();
+
+			// A 200px element, 100px below the line, never active.
+			place(600, 800);
+			observer.register(element, { activateFrom: 'above', onActivate, onScroll });
+			report();
+			tick(observer);
+
+			scrollWindowTo(200);
+			place(400, 600);
+			tick(observer);
+			expect(observer.instances.get(element).state).toBe('inactive');
+			expect(values()).toEqual({ offset: '', progress: '' });
+
+			scrollWindowTo(350);
+			place(250, 450);
+			tick(observer);
+
+			const instance = observer.instances.get(element);
+			expect(instance.state).toBe('passed');
+			expect(instance.offset).toBe(200);
+			expect(instance.progress).toBe(1);
+			expect(values()).toEqual({ offset: '200', progress: '1' });
+			expect(log).toEqual(['onScroll 200 1']);
+			expect(onActivate).not.toHaveBeenCalled();
+		});
+
 		it('should call onScroll with the held value before onDeactivate', () => {
 			const onDeactivate = vi.fn(() => log.push('onDeactivate'));
 
@@ -4719,26 +4826,42 @@ describe('elements that reach the line without a pass on it', () => {
 			near(other);
 			tick(observer);
 
-			// Down past both in one frame: only 'below' activates.
+			// Down past both in one frame: only 'below' activates. Both hold
+			// the value past the line.
 			scrollWindowTo(100);
 			place(element, 460, 500);
 			place(other, 460, 500);
 			tick(observer);
 
-			expect(log).toEqual(['below onActivate', 'below onScroll 40 1', 'below onDeactivate']);
+			expect(log).toEqual([
+				'below onActivate',
+				'below onScroll 40 1',
+				'below onDeactivate',
+				'above onScroll 40 1',
+			]);
 			expect(classes(element)).toEqual(['is-passed']);
 			expect(classes(other)).toEqual(['is-passed']);
+			expect(values(element)).toEqual({ offset: '40', progress: '1' });
+			expect(values(other)).toEqual({ offset: '40', progress: '1' });
 
-			// Up past both in one frame: only 'above' activates.
+			// Up past both in one frame: only 'above' activates. Both hold
+			// the value below the line.
 			log = [];
 			scrollWindowTo(0);
 			place(element, 560, 600);
 			place(other, 560, 600);
 			tick(observer);
 
-			expect(log).toEqual(['above onActivate', 'above onScroll 0 0', 'above onDeactivate']);
+			expect(log).toEqual([
+				'below onScroll 0 0',
+				'above onActivate',
+				'above onScroll 0 0',
+				'above onDeactivate',
+			]);
 			expect(classes(element)).toEqual([]);
 			expect(classes(other)).toEqual([]);
+			expect(values(element)).toEqual({ offset: '0', progress: '0' });
+			expect(values(other)).toEqual({ offset: '0', progress: '0' });
 		});
 	});
 
@@ -5238,8 +5361,29 @@ describe('a resize', () => {
 			expect([...observersOf(a), ...observersOf(b)]).toEqual(before);
 			expect(observer.viewportWidth).toBe(1200);
 
-			// `b` is not active and its line did not move, so it is not read.
+			// `b` is not active or near, and its line did not move, so it is
+			// not read.
 			expect(b.getBoundingClientRect).not.toHaveBeenCalled();
+		});
+
+		it('should read a near element, whose bottom edge a reflow can move across the line inside the band', () => {
+			const onActivate = vi.fn();
+			place(a, 300, 480);
+			observer.register(a, { onActivate });
+			report(a);
+			tick(observer);
+			onActivate.mockClear();
+			expect(observer.instances.get(a).state).toBe('passed');
+
+			// The narrower page wraps more lines, and `a` grows across the
+			// line. Both IntersectionObservers still see it, so neither
+			// reports.
+			place(a, 300, 550);
+			resizeTo(1200, 1000);
+
+			expect(observer.instances.get(a).state).toBe('active');
+			expect([...a.classList]).toEqual(['is-active']);
+			expect(onActivate).toHaveBeenCalledTimes(1);
 		});
 
 		it("should read an active element, whose height a reflow can change", () => {

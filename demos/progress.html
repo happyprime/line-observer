@@ -47,7 +47,7 @@
 	<div class="trigger-line"></div>
 
 	<aside class="panel">
-		<p><a href="index.html">All demos</a>. Each box's bar and dot follow its <code>--scroll-progress</code>: 0 when the line meets the top edge, 1 at the bottom edge. A box past the line holds 1, and one below it holds 0. Insert content above the page with B on the line: scroll anchoring moves the page, B stays put, and so does its offset. Grow C while it is on the line, then scroll: its progress counts the new height.</p>
+		<p><a href="index.html">All demos</a>. Each box's bar and dot follow its <code>--scroll-progress</code>: 0 when the line meets the top edge, 1 at the bottom edge. A box past the line holds 1, and one below it holds 0. Insert content above the page with B on the line: scroll anchoring moves the page, B stays put, and so does its offset. Grow C while it is on the line, then scroll: its progress counts the new height. D activates only scrolling down, with <code>activateFrom: 'below'</code>: scrolled back up, it stays passed while it spans the line, then holds 0 below it, like the others.</p>
 		<nav>
 			<button type="button" id="toggle-insert">Insert 300px at the top</button>
 			<button type="button" id="toggle-grow">Grow C by 400px</button>
@@ -79,6 +79,13 @@
 			<div class="dot"></div>
 		</section>
 		<div class="spacer"></div>
+		<section class="box" id="d" style="height: 600px">
+			<strong>D</strong>, 600px tall, <code>'below'</code>
+			<div class="readout">inactive</div>
+			<div class="track"><div class="bar"></div></div>
+			<div class="dot"></div>
+		</section>
+		<div class="spacer"></div>
 		<div class="spacer"></div>
 	</main>
 
@@ -91,6 +98,7 @@
 		const a = document.getElementById('a');
 		const b = document.getElementById('b');
 		const c = document.getElementById('c');
+		const d = document.getElementById('d');
 		const main = document.getElementById('main');
 
 		const progressOf = (box) => {
@@ -106,9 +114,16 @@
 
 		const observer = new LineObserver({ triggerLine: '50vh' });
 
-		for (const box of [a, b, c]) {
+		// D's onActivate calls, which 'below' allows only scrolling down.
+		let dActivations = 0;
+
+		for (const box of [a, b, c, d]) {
 			observer.register(box, {
-				onActivate: show,
+				activateFrom: box === d ? 'below' : 'both',
+				onActivate: (element) => {
+					dActivations += element === d ? 1 : 0;
+					show(element);
+				},
 				onDeactivate: show,
 				onScroll: (offset, element) => show(element),
 			});
@@ -170,6 +185,16 @@
 			await jump(0);
 		};
 
+		// Scrolls up in 60px steps from the line `from` pixels into the box
+		// until it is `to` pixels above the box's top edge.
+		const stepUp = async (box, from, to) => {
+			for (let depth = from; depth >= -to; depth -= 60) {
+				window.scrollTo({ top: lineInto(box, depth), behavior: 'instant' });
+				await waitFrames(2);
+			}
+			await waitFrames();
+		};
+
 		setUpChecks([
 			{
 				name: 'Jump into the middle of B: progress matches the geometry',
@@ -211,11 +236,7 @@
 					const passed = compare(a);
 
 					// 60px steps up until the line is 100px above A's top edge.
-					for (let depth = 640; depth >= -100; depth -= 60) {
-						window.scrollTo({ top: lineInto(a, depth), behavior: 'instant' });
-						await waitFrames(2);
-					}
-					await waitFrames();
+					await stepUp(a, 640, 100);
 
 					const above = compare(a);
 
@@ -243,6 +264,29 @@
 							...values.actual,
 							height: within(observer.instances.get(c).elementHeight, 1000),
 						},
+					};
+				},
+			},
+			{
+				name: "Pass D, 'below', then scroll back above it: progress holds 1, then 0, with one activation",
+				run: async () => {
+					await reset();
+					dActivations = 0;
+					await jump(lineInto(d, 300));
+					await jump(lineInto(d, 700));
+					const passed = compare(d);
+
+					await stepUp(d, 640, 100);
+
+					const above = compare(d);
+
+					return {
+						expected: {
+							passed: { ...passed.expected, offset: 600, progress: 1 },
+							above: { ...above.expected, offset: 0, progress: 0 },
+							activations: 1,
+						},
+						actual: { passed: passed.actual, above: above.actual, activations: dActivations },
 					};
 				},
 			},
