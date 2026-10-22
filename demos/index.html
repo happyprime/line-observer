@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver demos</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		body {
+			max-width: 40rem;
+			margin: 0 auto;
+			padding: 16px;
+		}
+	</style>
+</head>
+<body>
+	<h1>LineObserver demos</h1>
+	<p>Each page loads <code>../build/line-observer.js</code>. Run <code>npx rollup -c</code> first. The check pages run their cases on load when the URL has <code>?check</code>, or when you press Run check.</p>
+	<ul>
+		<li><a href="line-observer.html">Scroll-triggered animations</a>: the main demo.</li>
+		<li><a href="jump-offset.html">Offset after a jump</a> (<a href="jump-offset.html?check">check</a>): an element that activates after a jump gets an offset from its top edge, in the same frame.</li>
+	</ul>
+</body>
+</html>

@@ -218,14 +218,35 @@ class LineObserver {
 	}
 
 	/**
+	 * Records the element's height and the scroll position at which its top
+	 * edge meets the trigger line.
+	 *
+	 * The offset is `scrollY - activationScrollY`: the distance from the
+	 * element's top edge to the trigger line. After a jump, the element can be
+	 * far across the line when it activates, so the offset does not start at 0.
+	 *
+	 * @param {Object}  instance - The observer instance about to activate.
+	 * @param {DOMRect} rect     - The element's rect, read at `scrollY`.
+	 * @param {number}  scrollY  - The scroll position when `rect` was read.
+	 * @private
+	 */
+	_measure(instance, rect, scrollY) {
+		instance.elementHeight = instance.element.offsetHeight;
+		instance.activationScrollY =
+			scrollY - (instance.triggerLinePx - rect.top);
+	}
+
+	/**
 	 * Transition instance to new state
+	 *
+	 * An instance that moves to 'active' must be measured with `_measure()`
+	 * first.
 	 *
 	 * @param {Object} instance - The observer instance to transition.
 	 * @param {string} newState - The new state ('inactive', 'active', or 'passed').
-	 * @param {number} scrollY  - The current scroll Y position.
 	 * @private
 	 */
-	transitionState(instance, newState, scrollY) {
+	transitionState(instance, newState) {
 		if (newState === instance.state) {
 			return;
 		}
@@ -236,24 +257,6 @@ class LineObserver {
 		const { element, options } = instance;
 
 		if (newState === 'active') {
-			// Entering active state
-			instance.elementHeight = element.offsetHeight;
-
-			// Calculate activationScrollY so that offset (scrollY - activationScrollY)
-			// starts at 0 and grows as the user scrolls through the element.
-			//
-			// When scrolling down (top crossed the line): activationScrollY = current scrollY.
-			// When scrolling up (bottom crossed the line): we subtract elementHeight so the
-			// offset reflects distance from the element's top, not its bottom.
-			//
-			// In checkInitialState, a different formula is used because we know the element's
-			// exact position relative to the trigger line: scrollY - (triggerLinePx - rect.top).
-			if (this.currentDirection === 'down') {
-				instance.activationScrollY = scrollY;
-			} else {
-				instance.activationScrollY = scrollY - instance.elementHeight;
-			}
-
 			element.classList.add(options.activeClass);
 			this.activeInstances.add(instance);
 			this.startLoop();
@@ -348,14 +351,8 @@ class LineObserver {
 		const initialState = this._determineState(rect, instance.triggerLinePx);
 
 		if (initialState === 'active') {
-			// Override activationScrollY after transitionState sets it, because
-			// we know the element's exact position. The generic formula in
-			// transitionState assumes the edge just crossed the line; here
-			// the element may already be mid-overlap, so we calculate precisely:
-			// scrollY - (how far the trigger line is into the element).
-			this.transitionState(instance, 'active', scrollY);
-			const distanceIntoElement = instance.triggerLinePx - rect.top;
-			instance.activationScrollY = scrollY - distanceIntoElement;
+			this._measure(instance, rect, scrollY);
+			this.transitionState(instance, 'active');
 		} else if (initialState === 'passed') {
 			instance.state = 'passed';
 		}
@@ -460,22 +457,68 @@ class LineObserver {
 	}
 
 	/**
+	 * Returns the state an element moves to, or null if it stays where it is.
+	 *
+	 * Reads the element's rect, and its height if it activates. It writes
+	 * nothing to the DOM.
+	 *
+	 * @param {Object} instance - The observer instance to check.
+	 * @param {number} scrollY  - The current scroll Y position.
+	 * @return {string|null}      The new state, or null.
+	 * @private
+	 */
+	_readState(instance, scrollY) {
+		if (!instance.element.isConnected) {
+			return instance.state === 'inactive' ? null : 'inactive';
+		}
+
+		const rect = instance.element.getBoundingClientRect();
+		const newState = this._determineState(rect, instance.triggerLinePx);
+
+		if (
+			newState === instance.state ||
+			this._shouldSuppressTransition(
+				instance.options.activateFrom,
+				this.currentDirection,
+				instance.state,
+				newState
+			)
+		) {
+			return null;
+		}
+
+		if (newState === 'active') {
+			this._measure(instance, rect, scrollY);
+		}
+
+		return newState;
+	}
+
+	/**
+	 * Writes the element's offset to `--scroll-offset` and passes it to `onScroll`.
+	 *
+	 * @param {Object} instance - An active observer instance.
+	 * @param {number} scrollY  - The current scroll Y position.
+	 * @private
+	 */
+	_writeOffset(instance, scrollY) {
+		const offset = Math.max(0, scrollY - instance.activationScrollY);
+
+		if (instance.options.cssCustomProperty) {
+			instance.element.style.setProperty('--scroll-offset', offset);
+		}
+
+		if (instance.options.onScroll) {
+			instance.options.onScroll(offset, instance.element, instance);
+		}
+	}
+
+	/**
 	 * Main RAF loop
 	 *
-	 * Elements can be deactivated through two paths:
-	 *
-	 * 1. Near-instances pass (below): handles elements the IO band reports as
-	 *    near the trigger line. These get fresh getBoundingClientRect checks
-	 *    and precise state transitions every frame.
-	 *
-	 * 2. Active-instances pass (further below): handles elements that are active
-	 *    but have left the IO band (e.g., fast scrolling moved them far from the
-	 *    trigger line). These are caught by checking if the element has scrolled
-	 *    fully past the trigger line.
-	 *
-	 * Both paths apply activateFrom filtering via _shouldSuppressTransition().
-	 * The `transitioned` Set prevents double-processing when an element appears
-	 * in both nearInstances and activeInstances.
+	 * Each pass reads every rect and height it needs, then writes classes,
+	 * styles and callbacks. A read that follows a write in the same frame
+	 * makes the browser lay out the page again.
 	 *
 	 * @private
 	 */
@@ -507,105 +550,35 @@ class LineObserver {
 			this.currentDirection = scrollY > this.lastScrollY ? 'down' : 'up';
 		}
 
-		// === STATE TRANSITIONS FOR NEAR ELEMENTS ===
-		// IO only tells us an element is near the trigger line. The RAF
-		// loop does the precise state determination every frame.
+		// === READ PHASE ===
 		const transitions = [];
 
 		for (const instance of this.nearInstances) {
-			if (!instance.element.isConnected) {
-				transitions.push({ instance, newState: 'inactive' });
-				continue;
-			}
-
-			const rect = instance.element.getBoundingClientRect();
-			const newState = this._determineState(rect, instance.triggerLinePx);
-
-			if (newState !== instance.state) {
-				if (
-					this._shouldSuppressTransition(
-						instance.options.activateFrom,
-						this.currentDirection,
-						instance.state,
-						newState
-					)
-				) {
-					continue;
-				}
-
+			const newState = this._readState(instance, scrollY);
+			if (newState) {
 				transitions.push({ instance, newState });
 			}
 		}
 
-		// Track instances handled here to skip them in the active-instances pass
-		const transitioned = new Set();
-		for (const { instance, newState } of transitions) {
-			this.transitionState(instance, newState, scrollY);
-			transitioned.add(instance);
+		// A fast scroll can move an active element past the whole IO band
+		// between two frames, so active elements are read even when not near.
+		for (const instance of this.activeInstances) {
+			if (this.nearInstances.has(instance)) {
+				continue;
+			}
+			const newState = this._readState(instance, scrollY);
+			if (newState) {
+				transitions.push({ instance, newState });
+			}
 		}
 
-		// === BATCH READ PHASE FOR ACTIVE ELEMENTS ===
-		const updates = [];
-		const deactivations = [];
+		// === WRITE PHASE ===
+		for (const { instance, newState } of transitions) {
+			this.transitionState(instance, newState);
+		}
 
 		for (const instance of this.activeInstances) {
-			// Skip instances already handled in the near-instances pass
-			if (transitioned.has(instance)) {
-				continue;
-			}
-			// Auto-deactivate elements that have been removed from the DOM
-			if (!instance.element.isConnected) {
-				deactivations.push({
-					instance,
-					newState: 'inactive',
-				});
-				continue;
-			}
-
-			const offset = Math.max(0, scrollY - instance.activationScrollY);
-			const rect = instance.element.getBoundingClientRect();
-
-			// Use the same geometric check as the near-instances pass
-			const newState = this._determineState(rect, instance.triggerLinePx);
-
-			if (newState !== 'active') {
-				if (
-					!this._shouldSuppressTransition(
-						instance.options.activateFrom,
-						this.currentDirection,
-						'active',
-						newState
-					)
-				) {
-					deactivations.push({
-						instance,
-						newState,
-					});
-					continue;
-				}
-			}
-
-			updates.push({ instance, offset });
-		}
-
-		// === BATCH WRITE PHASE ===
-
-		// Process deactivations
-		for (const { instance, newState } of deactivations) {
-			this.transitionState(instance, newState, scrollY);
-		}
-
-		// Process offset updates
-		for (const { instance, offset } of updates) {
-			// Set CSS custom property
-			if (instance.options.cssCustomProperty) {
-				instance.element.style.setProperty('--scroll-offset', offset);
-			}
-
-			// Call custom scroll handler if provided
-			if (instance.options.onScroll) {
-				instance.options.onScroll(offset, instance.element, instance);
-			}
+			this._writeOffset(instance, scrollY);
 		}
 
 		// Update tracking
@@ -651,6 +624,9 @@ class LineObserver {
 			this.viewportHeight = window.innerHeight;
 			this.viewportWidth = window.innerWidth;
 
+			const scrollY = window.scrollY;
+			const transitions = [];
+
 			// Recalculate trigger line, recreate observers, and re-check states
 			for (const instance of this.instances.values()) {
 				if (!instance.element.isConnected) {
@@ -670,19 +646,16 @@ class LineObserver {
 					rect,
 					instance.triggerLinePx
 				);
-				const scrollY = window.scrollY;
 				if (newState !== instance.state) {
-					this.transitionState(instance, newState, scrollY);
-
-					// Override activationScrollY with precise formula based on
-					// actual element position, same as checkInitialState.
 					if (newState === 'active') {
-						const distanceIntoElement =
-							instance.triggerLinePx - rect.top;
-						instance.activationScrollY =
-							scrollY - distanceIntoElement;
+						this._measure(instance, rect, scrollY);
 					}
+					transitions.push({ instance, newState });
 				}
+			}
+
+			for (const { instance, newState } of transitions) {
+				this.transitionState(instance, newState);
 			}
 		}, 150);
 	}
