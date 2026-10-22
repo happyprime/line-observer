@@ -61,6 +61,15 @@
 		"lint:package": "node ./node_modules/npm-package-json-lint/dist/cli.js ./package.json"
 	},
 	"npmpackagejsonlint": {
-		"extends": "@wordpress/npm-package-json-lint-config"
+		"extends": "@wordpress/npm-package-json-lint-config",
+		"rules": {
+			"valid-values-license": [
+				"error",
+				[
+					"GPL-2.0-or-later",
+					"MIT"
+				]
+			]
+		}
 	}
 }
