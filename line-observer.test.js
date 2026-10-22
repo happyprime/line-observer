@@ -26,6 +26,16 @@ class MockIntersectionObserver {
 
 MockIntersectionObserver.instances = [];
 
+// Sets window.scrollY and fires the scroll event a browser would fire.
+const scrollWindowTo = (value) => {
+	Object.defineProperty(window, 'scrollY', {
+		writable: true,
+		configurable: true,
+		value,
+	});
+	window.dispatchEvent(new Event('scroll'));
+};
+
 // Set up mocks before tests
 beforeEach(() => {
 	MockIntersectionObserver.instances = [];
@@ -1237,11 +1247,9 @@ describe('activateFrom filtering in tick()', () => {
 			top: 400,
 			bottom: 700,
 		});
+		scrollWindowTo(200);
 		observer.lastScrollY = 200;
-		Object.defineProperty(window, 'scrollY', {
-			value: 100,
-			configurable: true,
-		});
+		scrollWindowTo(100);
 
 		observer.tick();
 
@@ -1258,11 +1266,9 @@ describe('activateFrom filtering in tick()', () => {
 			top: 400,
 			bottom: 700,
 		});
+		scrollWindowTo(200);
 		observer.lastScrollY = 200;
-		Object.defineProperty(window, 'scrollY', {
-			value: 100,
-			configurable: true,
-		});
+		scrollWindowTo(100);
 
 		observer.tick();
 
@@ -1300,11 +1306,9 @@ describe('activateFrom filtering in tick()', () => {
 			top: 400,
 			bottom: 700,
 		});
+		scrollWindowTo(200);
 		observer.lastScrollY = 200;
-		Object.defineProperty(window, 'scrollY', {
-			value: 100,
-			configurable: true,
-		});
+		scrollWindowTo(100);
 		observer.tick();
 		expect(instance.state).toBe('active');
 
@@ -1347,11 +1351,9 @@ describe('activateFrom filtering in tick()', () => {
 			top: 600,
 			bottom: 900,
 		});
+		scrollWindowTo(200);
 		observer.lastScrollY = 200;
-		Object.defineProperty(window, 'scrollY', {
-			value: 100,
-			configurable: true,
-		});
+		scrollWindowTo(100);
 		observer.tick();
 
 		// Deactivation to 'inactive' suppressed — wrong direction for 'below'
@@ -3251,5 +3253,131 @@ describe('a pass at rest', () => {
 		observer.destroy();
 
 		expect(observer.reportedInstances.size).toBe(0);
+	});
+});
+
+describe('direction while the loop is stopped', () => {
+	let observer;
+	let below;
+	let above;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	// Registers one element of each kind, both at the same place.
+	const registerBoth = (top, bottom) => {
+		place(below, top, bottom);
+		place(above, top, bottom);
+		observer.register(below, { activateFrom: 'below' });
+		observer.register(above, { activateFrom: 'above' });
+	};
+
+	// Puts both elements across the line and lets IO report them.
+	const landOnBoth = () => {
+		place(below, 400, 700);
+		place(above, 400, 700);
+		for (const element of [below, above]) {
+			observer.handleIntersection(
+				[{ isIntersecting: true }],
+				observer.instances.get(element)
+			);
+		}
+		observer.tick();
+	};
+
+	const stateOf = (element) => observer.instances.get(element).state;
+
+	beforeEach(() => {
+		below = document.createElement('div');
+		above = document.createElement('div');
+		for (const element of [below, above]) {
+			Object.defineProperty(element, 'offsetHeight', {
+				value: 300,
+				configurable: true,
+			});
+			document.body.append(element);
+		}
+	});
+
+	afterEach(() => {
+		below.remove();
+		above.remove();
+		observer.destroy();
+	});
+
+	it('should take the last move up, not the net move down since the loop stopped', () => {
+		// The line is at 500. Both elements are far below it.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		registerBoth(1300, 1600);
+		expect(observer.isActive()).toBe(false);
+
+		// The page jumps down past both, then up onto them. Nothing comes
+		// near on the way, so the loop stays stopped.
+		scrollWindowTo(3000);
+		scrollWindowTo(1000);
+		landOnBoth();
+
+		expect(observer.getDirection()).toBe('up');
+		expect(stateOf(above)).toBe('active');
+		expect(stateOf(below)).toBe('inactive');
+	});
+
+	it('should take the last move down, not the net move up since the loop stopped', () => {
+		// The page starts far down, with both elements far above the line.
+		scrollWindowTo(3000);
+		observer = new LineObserver({ triggerLine: '50vh' });
+		registerBoth(-1300, -1000);
+		expect(observer.isActive()).toBe(false);
+
+		// The page jumps up past both, then down onto them.
+		scrollWindowTo(0);
+		scrollWindowTo(1000);
+		landOnBoth();
+
+		expect(observer.getDirection()).toBe('down');
+		expect(stateOf(below)).toBe('active');
+		expect(stateOf(above)).toBe('passed');
+	});
+
+	it('should take the direction of a move whose scroll event has not fired', () => {
+		observer = new LineObserver({ triggerLine: '50vh' });
+		scrollWindowTo(1000);
+
+		// Both elements have just passed the line and are near.
+		registerBoth(150, 450);
+		for (const element of [below, above]) {
+			observer.handleIntersection(
+				[{ isIntersecting: true }],
+				observer.instances.get(element)
+			);
+		}
+		observer.tick();
+
+		// An anchor jump moves the page up 100px. Chromium runs RAF
+		// callbacks before the scroll event for it.
+		Object.defineProperty(window, 'scrollY', {
+			value: 900,
+			configurable: true,
+		});
+		place(below, 250, 550);
+		place(above, 250, 550);
+		observer.tick();
+
+		expect(observer.getDirection()).toBe('up');
+		expect(stateOf(above)).toBe('active');
+		expect(stateOf(below)).toBe('passed');
+	});
+
+	it('should remove the scroll listener on destroy', () => {
+		observer = new LineObserver();
+		const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+
+		observer.destroy();
+
+		expect(removeEventListenerSpy).toHaveBeenCalledWith(
+			'scroll',
+			observer.trackDirection
+		);
 	});
 });

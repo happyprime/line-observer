@@ -100,7 +100,7 @@ observer.unregister(el1);
 
 ### destroy()
 
-Tear down everything: stops the RAF loop, disconnects all IntersectionObservers, removes classes and custom properties from all elements, and removes the resize listener.
+Tear down everything: stops the RAF loop, disconnects all IntersectionObservers, removes classes and custom properties from all elements, and removes the resize and scroll listeners.
 
 ```js
 observer.destroy();
@@ -132,7 +132,7 @@ observer.isActive(); // true
 
 ### getDirection()
 
-Returns the current scroll direction: `'up'` or `'down'`.
+Returns the direction of the last scroll: `'up'` or `'down'`. A passive `scroll` listener records it, so it stays current while the animation loop is stopped.
 
 ```js
 observer.getDirection(); // 'down'
@@ -221,6 +221,8 @@ When `activateFrom` is `'above'`:
 - Elements activate only when they first touch the trigger line from above (user scrolling up).
 - Elements will not activate when crossing from below.
 - Once active, deactivation by scrolling back down (element passing above the trigger line) is suppressed.
+
+Known limit: with `'below'` or `'above'`, a layout change at rest, such as content above the element growing, is filtered with the direction of the last scroll. That direction has nothing to do with the layout change, so the element can miss an activation or stay active past the line.
 
 ## The --scroll-offset CSS custom property
 
