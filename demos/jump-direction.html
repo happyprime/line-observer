@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver: direction after jumps</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		.pair {
+			position: relative;
+			display: flex;
+			gap: 16px;
+			margin: 0 16px;
+		}
+
+		.pair .box {
+			flex: 1;
+			margin: 0;
+		}
+
+		/* An anchor target that puts the line 100px into the boxes. */
+		#mark {
+			position: absolute;
+			top: calc(100px - 50vh);
+		}
+	</style>
+</head>
+<body>
+	<div id="top"></div>
+	<div class="trigger-line"></div>
+
+	<aside class="panel">
+		<p><a href="index.html">All demos</a>. Nothing is near the line on the way, so the loop is stopped between jumps. From the top, take End, then Boxes: the last move was up, so only the "above" box should activate. From the end, take Top, then Boxes: only the "below" box should. Scroll until the line is just past the boxes, then take "Line 100px into the boxes": only the "above" box should activate. The check takes this link while the loop runs; by hand, the loop has stopped by the time you click.</p>
+		<nav>
+			<a href="#top">Top</a>
+			<a href="#end">End</a>
+			<a href="#boxes">Boxes</a>
+			<a href="#mark">Line 100px into the boxes</a>
+			<button type="button" id="run-check">Run check</button>
+		</nav>
+		<p>Direction: <strong id="direction">down</strong></p>
+		<ol id="check-results"></ol>
+	</aside>
+
+	<main>
+		<div class="spacer"></div>
+		<div class="pair" id="boxes">
+			<span id="mark"></span>
+			<section class="box" id="below-box" style="height: 600px">
+				<strong>activateFrom: 'below'</strong>
+				<div class="readout">inactive</div>
+			</section>
+			<section class="box" id="above-box" style="height: 600px">
+				<strong>activateFrom: 'above'</strong>
+				<div class="readout">inactive</div>
+			</section>
+		</div>
+		<div class="spacer"></div>
+		<div class="spacer"></div>
+		<div id="end"></div>
+	</main>
+
+	<script src="js/check.js"></script>
+	<script src="../build/line-observer.js"></script>
+	<script>
+		const { waitFrames, jump, lineInto, setUpChecks } = window.demoCheck;
+
+		const boxes = document.getElementById('boxes');
+		const belowBox = document.getElementById('below-box');
+		const aboveBox = document.getElementById('above-box');
+		let observer;
+
+		const show = (box) => {
+			box.querySelector('.readout').textContent = box.classList.contains('is-active')
+				? 'active'
+				: 'inactive';
+		};
+
+		// A new observer starts with its loop stopped at the current position.
+		const start = () => {
+			if (observer) {
+				observer.destroy();
+			}
+			observer = new LineObserver({ triggerLine: '50vh' });
+			observer.register(belowBox, { activateFrom: 'below', onActivate: show, onDeactivate: show });
+			observer.register(aboveBox, { activateFrom: 'above', onActivate: show, onDeactivate: show });
+			show(belowBox);
+			show(aboveBox);
+		};
+
+		start();
+
+		window.addEventListener(
+			'scroll',
+			() => {
+				document.getElementById('direction').textContent = observer.getDirection();
+			},
+			{ passive: true }
+		);
+
+		const follow = async (hash) => {
+			history.replaceState(null, '', location.pathname + location.search);
+			document.querySelector(`a[href="${hash}"]`).click();
+			await waitFrames();
+		};
+
+		const end = () => document.documentElement.scrollHeight;
+
+		const actual = () => ({
+			below: belowBox.classList.contains('is-active'),
+			above: aboveBox.classList.contains('is-active'),
+			direction: observer.getDirection(),
+		});
+
+		const cameUp = { below: false, above: true, direction: 'up' };
+		const cameDown = { below: true, above: false, direction: 'down' };
+
+		setUpChecks([
+			{
+				name: 'Instant scrolls: down past the boxes, then up onto them',
+				run: async () => {
+					await jump(0);
+					start();
+					await jump(end());
+					await jump(lineInto(boxes, 100));
+					return { expected: cameUp, actual: actual() };
+				},
+			},
+			{
+				name: 'Instant scrolls: up past the boxes, then down onto them',
+				run: async () => {
+					await jump(end());
+					start();
+					await jump(0);
+					await jump(lineInto(boxes, 100));
+					return { expected: cameDown, actual: actual() };
+				},
+			},
+			{
+				name: 'Anchor links: down to End, then up to Boxes',
+				run: async () => {
+					await jump(0);
+					start();
+					await follow('#end');
+					await follow('#boxes');
+					return { expected: cameUp, actual: actual() };
+				},
+			},
+			{
+				name: 'Anchor links: up to Top, then down to Boxes',
+				run: async () => {
+					await jump(end());
+					start();
+					await follow('#top');
+					await follow('#boxes');
+					return { expected: cameDown, actual: actual() };
+				},
+			},
+			{
+				name: 'Anchor link up onto the boxes from just past them',
+				run: async () => {
+					await jump(0);
+					start();
+					await jump(lineInto(boxes, 640));
+
+					// The loop stops once the page is still. A 10px scroll
+					// starts it again, so it runs through the jump.
+					window.scrollTo({ top: lineInto(boxes, 650), behavior: 'instant' });
+					await waitFrames(1);
+					const running = observer.isActive();
+
+					await follow('#mark');
+					return {
+						expected: { ...cameUp, running: true },
+						actual: { ...actual(), running },
+					};
+				},
+			},
+		]);
+	</script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>LineObserver demos</title>
+	<link rel="stylesheet" href="css/check.css">
+	<style>
+		body {
+			max-width: 40rem;
+			margin: 0 auto;
+			padding: 16px;
+		}
+	</style>
+</head>
+<body>
+	<h1>LineObserver demos</h1>
+	<p>Each page loads <code>../build/line-observer.js</code>. Run <code>npx rollup -c</code> first. The check pages run their cases on load when the URL has <code>?check</code>. Run check loads the page again with <code>?check</code>, from the top, so a check never starts on a page scrolled by hand.</p>
+	<ul>
+		<li><a href="line-observer.html">Scroll-triggered animations</a>: the main demo.</li>
+		<li><a href="jump-offset.html">Offset after a jump</a> (<a href="jump-offset.html?check">check</a>): an element that activates after a jump gets an offset from its top edge, in the same frame.</li>
+		<li><a href="at-rest.html">Layout changes at rest</a> (<a href="at-rest.html?check">check</a>): an active element moved off the line by a layout change deactivates, and a pass at rest leaves other active elements alone.</li>
+		<li><a href="jump-direction.html">Direction after jumps</a> (<a href="jump-direction.html?check">check</a>): <code>activateFrom</code> follows the last move, even when the page moved while the loop was stopped.</li>
+		<li><a href="callback-errors.html">Callback errors</a> (<a href="callback-errors.html?check">check</a>): a callback that throws does not stop the loop, an element a callback unregisters gets no more writes, and a callback written as a function gets the element's options as <code>this</code>.</li>
+		<li><a href="idle-loop.html">The loop at rest</a> (<a href="idle-loop.html?check">check</a>): the loop stops a few frames after the page comes to rest, and a scroll, an anchor link or a layout change starts it again.</li>
+		<li><a href="progress.html">Progress</a> (<a href="progress.html?check">check</a>): <code>--scroll-progress</code> follows the element's position, holds 1 past the line and 0 below it, also for an element <code>activateFrom</code> keeps from activating, and counts the height an element grows to.</li>
+		<li><a href="reveal-once.html">Reveal once</a> (<a href="reveal-once.html?check">check</a>, which loads the page again at <code>#c6</code>): cards and headings revealed with <code>once</code> show after a load partway down, a fast flick, a filter that adds cards above, and a jump past them and back. A section that is not <code>once</code> holds <code>is-passed</code>.</li>
+		<li><a href="many.html">Many elements, three observers</a> (<a href="many.html?check">check</a>): 300 elements over three observers with different lines share one loop and six IntersectionObservers. Every element activates and deactivates in order, no frame reads the page after writing to it, and destroying one observer leaves the other two working.</li>
+		<li><a href="resize.html">Resize</a> (<a href="resize.html?check">check</a>): a height that goes back and forth, as a phone's toolbar shows and hides, leaves an element that <code>activateFrom</code> holds active held, a width-only resize builds no IntersectionObserver, and an element it makes grow across the line activates. The check changes the viewport: in a headless run the runner does it, and by hand you set the sizes the page asks for with the device toolbar.</li>
+		<li><a href="options.html">Option values</a> (<a href="options.html?check">check</a>): elements registered from <code>data-</code> attributes, as a block's script would, turn on at their own lines. A string of digits is a number, a missing attribute keeps the default, and each invalid value logs one warning.</li>
+		<li><a href="script-tag.html">Script tag</a> (<a href="script-tag.html?check">check</a>): the README's classic script tag and child animation. The child moves, not the observed element, so in 10px steps the element activates and deactivates once each way. Past the line the child holds its end state, also when the section is registered there.</li>
+		<li><a href="recipes.html">Recipes</a> (<a href="recipes.html?check">check</a>): every recipe in the README, with its CSS and JavaScript as written there. The check runs the cases for how the page loaded. As usual: reveal once, <code>is-passed</code>, progress, stagger order, parallax on the native or fallback path, the clip, and <code>data-</code> options. With reduced motion: nothing moves and the clip never plays. With <code>line-observer.js</code> blocked: all content shows.</li>
+	</ul>
+</body>
+</html>
