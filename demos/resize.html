@@ -6,7 +6,9 @@
 	<title>LineObserver: resize</title>
 	<link rel="stylesheet" href="css/check.css">
 	<style>
-		/* Heights in px, so a resize moves nothing on the page. */
+		/* Heights in px, so a resize moves nothing on the page, except R,
+		   last on the page, which grows 1px for each 1px the viewport
+		   narrows, as text wraps. */
 		.gap {
 			height: 1200px;
 		}
@@ -56,7 +58,7 @@
 	<div class="trigger-line"></div>
 
 	<aside class="panel">
-		<p><a href="index.html">All demos</a>. A phone's toolbar showing or hiding resizes the viewport's height, and a <code>50vh</code> line moves with it. Here the check changes the viewport and keeps the scroll position. H (<code>'below'</code>) and G (<code>'above'</code>) are held active by the direction of the last scroll and must stay held. S spans the line and must not change. P has a <code>200px</code> line of its own: a width-only resize must build no IntersectionObserver for it or anyone else.</p>
+		<p><a href="index.html">All demos</a>. A phone's toolbar showing or hiding resizes the viewport's height, and a <code>50vh</code> line moves with it. Here the check changes the viewport and keeps the scroll position. H (<code>'below'</code>) and G (<code>'above'</code>) are held active by the direction of the last scroll and must stay held. S spans the line and must not change. R, near the line and past it, grows across it when the viewport narrows, with no IntersectionObserver report: it must activate. P has a <code>200px</code> line of its own: a width-only resize must build no IntersectionObserver for it or anyone else.</p>
 		<p>By hand: open the browser's device toolbar, press Run check, and set the viewport to each size shown here: <span id="request">none asked for</span>.</p>
 		<nav>
 			<button type="button" id="run-check">Run check</button>
@@ -87,6 +89,11 @@
 			<div class="readout">inactive</div>
 		</section>
 		<div class="gap"></div>
+		<section class="box" id="r" style="height: calc(1600px - 100vw)">
+			<strong>R</strong>, grows as the viewport narrows
+			<div class="readout">inactive</div>
+		</section>
+		<div class="gap"></div>
 	</main>
 
 	<script src="js/check.js"></script>
@@ -98,16 +105,20 @@
 		const s = document.getElementById('s');
 		const p = document.getElementById('p');
 		const g = document.getElementById('g');
+		const r = document.getElementById('r');
 
 		// The onActivate and onDeactivate calls for each box, as 'A' and 'D'.
-		const calls = { h: [], s: [], p: [], g: [] };
+		const calls = { h: [], s: [], p: [], g: [], r: [] };
 
-		const show = (box) => {
-			box.querySelector('.readout').textContent = box.classList.contains('is-active')
+		const stateOf = (box) =>
+			box.classList.contains('is-active')
 				? 'active'
 				: box.classList.contains('is-passed')
 					? 'passed'
 					: 'inactive';
+
+		const show = (box) => {
+			box.querySelector('.readout').textContent = stateOf(box);
 		};
 
 		const callbacks = (activateFrom = 'both') => ({
@@ -126,6 +137,7 @@
 		observer.register(h, callbacks('below'));
 		observer.register(s, callbacks());
 		observer.register(g, callbacks('above'));
+		observer.register(r, callbacks());
 
 		const pxObserver = new LineObserver({ triggerLine: '200px' });
 		pxObserver.register(p, callbacks());
@@ -220,11 +232,35 @@
 					await setViewport(width - 60, height);
 					await setViewport(width, height);
 					return {
-						expected: { created: 0, observed: 0, calls: { h: [], s: [], p: [], g: [] } },
+						expected: { created: 0, observed: 0, calls: { h: [], s: [], p: [], g: [], r: [] } },
 						actual: {
 							created: window.ioCreated - created,
 							observed: window.ioObserved - observed,
 							calls: structuredClone(calls),
+						},
+					};
+				},
+			},
+			{
+				name: "Width only, narrower and back: R's bottom edge crosses the line inside the band, and R activates, then passes again",
+				run: async () => {
+					await setViewport(width, height);
+					// R's bottom edge 30px above the line, inside the band.
+					await jump(lineInto(r, r.offsetHeight + 30));
+					const scrollY = window.scrollY;
+					const before = stateOf(r);
+					reset();
+					await setViewport(width - 60, height);
+					const narrower = stateOf(r);
+					await setViewport(width, height);
+					return {
+						expected: { before: 'passed', narrower: 'active', back: 'passed', calls: ['A', 'D'], scrollY },
+						actual: {
+							before,
+							narrower,
+							back: stateOf(r),
+							calls: [...calls.r],
+							scrollY: window.scrollY,
 						},
 					};
 				},

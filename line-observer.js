@@ -687,7 +687,10 @@ class LineObserver {
 	}
 
 	/**
-	 * Calls a user callback and reports an error it throws.
+	 * Calls a callback option, if set, as a method of the options, and reports an error it throws.
+	 *
+	 * A callback that is not an arrow function reads the options through
+	 * `this`, and code written for 0.0.1 relies on it.
 	 *
 	 * An uncaught error would leave the scheduler's frame before it requests
 	 * the next one. Every running observer keeps `isRunning` true, so
@@ -697,13 +700,18 @@ class LineObserver {
 	 * `reportError()` fires the window `error` event, as an uncaught error
 	 * does, so error trackers still see it.
 	 *
-	 * @param {Function} callback - The user callback.
-	 * @param {...*}     args     - Arguments for the callback.
+	 * @param {Object} options - The element's merged options.
+	 * @param {string} name    - The callback's option name.
+	 * @param {...*}   args    - Arguments for the callback.
 	 * @private
 	 */
-	_call(callback, ...args) {
+	_call(options, name, ...args) {
+		if (!options[name]) {
+			return;
+		}
+
 		try {
-			callback(...args);
+			options[name](...args);
 		} catch (error) {
 			if (typeof window.reportError === 'function') {
 				window.reportError(error);
@@ -731,11 +739,13 @@ class LineObserver {
 	/**
 	 * Transition instance to new state
 	 *
-	 * An instance that leaves 'active' holds the value it left with: its
-	 * height and progress 1 past the line, or 0 below it. `onScroll` gets
-	 * that value before `onDeactivate` runs. An instance that moves to
-	 * 'active' gets its values from `_apply()`, after every transition in
-	 * the pass.
+	 * An instance that moves to 'passed' or 'inactive' holds the value of
+	 * that side of the line: its height and progress 1 past it, or 0 below
+	 * it. `onScroll` gets that value, before `onDeactivate` if the instance
+	 * was active. This holds for a move between 'passed' and 'inactive' too,
+	 * as when `activateFrom` keeps an element from passing through 'active'.
+	 * An instance that moves to 'active' gets its values from `_apply()`,
+	 * after every transition in the pass.
 	 *
 	 * @param {Object} instance - The observer instance to transition.
 	 * @param {string} newState - The new state ('inactive', 'active', or 'passed').
@@ -760,24 +770,23 @@ class LineObserver {
 		if (newState === 'active') {
 			element.classList.add(options.activeClass);
 			this.activeInstances.add(instance);
+			this._call(options, 'onActivate', element, instance);
+			return;
+		}
 
-			if (options.onActivate) {
-				this._call(options.onActivate, element, instance);
-			}
-		} else if (oldState === 'active') {
-			// Leaving active state
+		if (oldState === 'active') {
 			element.classList.remove(options.activeClass);
 			this.activeInstances.delete(instance);
+		}
 
-			const passed = newState === 'passed';
-			instance.offset = passed ? instance.elementHeight : 0;
-			instance.progress = passed ? 1 : 0;
-			this._writeValues(instance);
+		const passed = newState === 'passed';
+		instance.offset = passed ? instance.elementHeight : 0;
+		instance.progress = passed ? 1 : 0;
+		this._writeValues(instance);
 
-			// onScroll can unregister the element.
-			if (options.onDeactivate && this._isRegistered(instance)) {
-				this._call(options.onDeactivate, element, instance);
-			}
+		// onScroll can unregister the element.
+		if (oldState === 'active' && this._isRegistered(instance)) {
+			this._call(options, 'onDeactivate', element, instance);
 		}
 	}
 
@@ -1021,9 +1030,9 @@ class LineObserver {
 				through = false;
 			}
 
-			// An element that leaves 'active' is measured too, so the height
+			// An element that changes state is measured too, so the height
 			// it holds past the line is current.
-			if (to === 'active' || from === 'active' || through) {
+			if (to === 'active' || to !== from) {
 				changed = this._measure(instance, rect);
 			}
 		}
@@ -1085,9 +1094,7 @@ class LineObserver {
 			element.style.setProperty('--scroll-progress', progress);
 		}
 
-		if (options.onScroll) {
-			this._call(options.onScroll, offset, element, instance);
-		}
+		this._call(options, 'onScroll', offset, element, instance);
 	}
 
 	/**
@@ -1238,9 +1245,11 @@ class LineObserver {
 	 * Like `_readFrame()`, it writes nothing to the DOM. `_apply()` writes the
 	 * changes.
 	 *
-	 * An element is read if its line moved, or if it is active, since a
-	 * resize can reflow the page and change its height. Any other element a
-	 * reflow moves across the line or the band gets an IO report.
+	 * An element is read if its line moved, or if it is active or near the
+	 * line. A resize can reflow the page and move an element's bottom edge
+	 * across the line inside the band, where neither IntersectionObserver
+	 * reports it. Any other element a reflow moves across the line or the
+	 * band gets an IO report.
 	 *
 	 * `activateFrom` filters these transitions by the direction of the last
 	 * scroll, so an element it holds active stays held. On a phone, the
@@ -1275,7 +1284,11 @@ class LineObserver {
 			instance.triggerLinePx = line;
 			this._observe(instance);
 
-			if (moved || instance.state === 'active') {
+			if (
+				moved ||
+				instance.state === 'active' ||
+				this.nearInstances.has(instance)
+			) {
 				const change = this._read(instance, true);
 				if (change) {
 					changes.push(change);
