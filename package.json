@@ -1,6 +1,6 @@
 {
 	"name": "@happyprime/line-observer",
-	"version": "0.0.1",
+	"version": "0.2.0",
 	"description": "A performant scroll interaction observer that triggers handlers when elements cross a configurable trigger line in the viewport",
 	"author": "Happy Prime",
 	"license": "MIT",

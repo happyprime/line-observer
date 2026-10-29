@@ -207,7 +207,9 @@ describe('LineObserver', () => {
 		});
 
 		it('should warn and return default for invalid format', () => {
-			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const warnSpy = vi
+				.spyOn(console, 'warn')
+				.mockImplementation(() => {});
 
 			const result = observer.parseTriggerLine('invalid');
 
@@ -220,7 +222,9 @@ describe('LineObserver', () => {
 		});
 
 		it('should warn for units without numbers', () => {
-			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const warnSpy = vi
+				.spyOn(console, 'warn')
+				.mockImplementation(() => {});
 
 			observer.parseTriggerLine('px');
 
@@ -294,17 +298,25 @@ describe('LineObserver', () => {
 			observer.register(element);
 
 			expect(MockIntersectionObserver.instances.length).toBe(2);
-			expect(MockIntersectionObserver.instances[0].observedElements).toContain(element);
-			expect(MockIntersectionObserver.instances[1].observedElements).toContain(element);
+			expect(
+				MockIntersectionObserver.instances[0].observedElements
+			).toContain(element);
+			expect(
+				MockIntersectionObserver.instances[1].observedElements
+			).toContain(element);
 		});
 
 		it('should warn and return early if element is already registered', () => {
-			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			const warnSpy = vi
+				.spyOn(console, 'warn')
+				.mockImplementation(() => {});
 
 			observer.register(element);
 			observer.register(element);
 
-			expect(warnSpy).toHaveBeenCalledWith('LineObserver: Element already registered');
+			expect(warnSpy).toHaveBeenCalledWith(
+				'LineObserver: Element already registered'
+			);
 			expect(observer.instances.size).toBe(1);
 
 			warnSpy.mockRestore();
@@ -562,7 +574,10 @@ describe('LineObserver', () => {
 		});
 
 		it('should remove resize event listener', () => {
-			const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+			const removeEventListenerSpy = vi.spyOn(
+				window,
+				'removeEventListener'
+			);
 
 			observer.destroy();
 
@@ -650,7 +665,10 @@ describe('LineObserver', () => {
 
 			observer.register(element, { onActivate });
 
-			expect(onActivate).toHaveBeenCalledWith(element, expect.any(Object));
+			expect(onActivate).toHaveBeenCalledWith(
+				element,
+				expect.any(Object)
+			);
 		});
 
 		it('should handle elements at scroll position 0', () => {
@@ -909,7 +927,8 @@ describe('LineObserver', () => {
 
 			observer.register(element);
 
-			const initialObserverCount = MockIntersectionObserver.instances.length;
+			const initialObserverCount =
+				MockIntersectionObserver.instances.length;
 
 			Object.defineProperty(window, 'innerHeight', {
 				value: 800,
@@ -919,7 +938,9 @@ describe('LineObserver', () => {
 			vi.advanceTimersByTime(200);
 
 			// A new near observer and a new edge observer
-			expect(MockIntersectionObserver.instances.length).toBe(initialObserverCount + 2);
+			expect(MockIntersectionObserver.instances.length).toBe(
+				initialObserverCount + 2
+			);
 
 			document.body.removeChild(element);
 		});
@@ -2673,12 +2694,7 @@ describe('_shouldSuppressTransition direct tests', () => {
 			)
 		).toBe(false);
 		expect(
-			observer._shouldSuppressTransition(
-				'both',
-				'up',
-				'passed',
-				'active'
-			)
+			observer._shouldSuppressTransition('both', 'up', 'passed', 'active')
 		).toBe(false);
 	});
 
@@ -2809,7 +2825,9 @@ describe('a jump that ends at rest', () => {
 	let second;
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const scrollTo = (value) => {
@@ -2946,7 +2964,9 @@ describe('activation after a jump', () => {
 	let element;
 
 	const place = (top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const scrollTo = (value) => {
@@ -3177,7 +3197,9 @@ describe('a pass at rest', () => {
 	let onScroll;
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const report = (element, isIntersecting) => {
@@ -3292,7 +3314,11 @@ describe('a pass at rest', () => {
 		expect(active.style.getPropertyValue('--scroll-offset')).toBe('0');
 		expect(onDeactivate).toHaveBeenCalledTimes(1);
 		expect(onScroll).toHaveBeenCalledTimes(1);
-		expect(onScroll).toHaveBeenCalledWith(0, active, observer.instances.get(active));
+		expect(onScroll).toHaveBeenCalledWith(
+			0,
+			active,
+			observer.instances.get(active)
+		);
 	});
 
 	it('should deactivate an active element pulled above the line at rest', () => {
@@ -3322,8 +3348,14 @@ describe('a pass at rest', () => {
 		place(other, 1300, 1600);
 		lone.register(other);
 		other.getBoundingClientRect.mockClear();
-		lone.handleIntersection([{ isIntersecting: true }], lone.instances.get(other));
-		lone.handleIntersection([{ isIntersecting: false }], lone.instances.get(other));
+		lone.handleIntersection(
+			[{ isIntersecting: true }],
+			lone.instances.get(other)
+		);
+		lone.handleIntersection(
+			[{ isIntersecting: false }],
+			lone.instances.get(other)
+		);
 		tick(lone);
 		expect(other.getBoundingClientRect).toHaveBeenCalledTimes(1);
 		tick(lone);
@@ -3373,7 +3405,9 @@ describe('direction while the loop is stopped', () => {
 	let above;
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	// Registers one element of each kind, both at the same place.
@@ -3499,7 +3533,9 @@ describe('small moves and the direction', () => {
 	let above;
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const placeBoth = (top, bottom) => {
@@ -3638,7 +3674,9 @@ describe('a callback that throws', () => {
 	};
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const report = (element) => {
@@ -3846,7 +3884,9 @@ describe('a callback that unregisters or destroys', () => {
 	let b;
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	// Puts `a`, then `b`, in the band just below the line, then scrolls
@@ -3957,7 +3997,9 @@ describe('the loop at rest', () => {
 	};
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const report = (element, isIntersecting) => {
@@ -4053,7 +4095,11 @@ describe('the loop at rest', () => {
 
 		expect(stateOf(a)).toBe('active');
 		expect(a.style.getPropertyValue('--scroll-offset')).toBe('250');
-		expect(onScroll).toHaveBeenCalledWith(250, a, observer.instances.get(a));
+		expect(onScroll).toHaveBeenCalledWith(
+			250,
+			a,
+			observer.instances.get(a)
+		);
 	});
 
 	it('should re-read the state of an active element a scroll moved while stopped', () => {
@@ -4167,7 +4213,9 @@ describe('offset and progress from the position', () => {
 	let log;
 
 	const place = (top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const report = () => {
@@ -4371,7 +4419,11 @@ describe('offset and progress from the position', () => {
 
 			// A 200px element, 100px below the line.
 			place(600, 800);
-			observer.register(element, { activateFrom: 'below', onActivate, onScroll });
+			observer.register(element, {
+				activateFrom: 'below',
+				onActivate,
+				onScroll,
+			});
 			report();
 			tick(observer);
 
@@ -4412,7 +4464,11 @@ describe('offset and progress from the position', () => {
 
 			// A 200px element, 100px below the line, never active.
 			place(600, 800);
-			observer.register(element, { activateFrom: 'above', onActivate, onScroll });
+			observer.register(element, {
+				activateFrom: 'above',
+				onActivate,
+				onScroll,
+			});
 			report();
 			tick(observer);
 
@@ -4472,7 +4528,9 @@ describe('offset and progress from the position', () => {
 			observer.register(element);
 			observer.register(other);
 			expect(values()).toEqual({ offset: '300', progress: '0.5' });
-			expect(other.style.getPropertyValue('--scroll-progress')).toBe('0.5');
+			expect(other.style.getPropertyValue('--scroll-progress')).toBe(
+				'0.5'
+			);
 
 			observer.unregister(element);
 			expect(values()).toEqual({ offset: '', progress: '' });
@@ -4540,7 +4598,9 @@ describe('elements that reach the line without a pass on it', () => {
 
 	// IO reports which side of the line the element's top edge is on.
 	const edge = (target, topAboveLine) =>
-		observersOf(target)[1]?.trigger([{ isIntersecting: topAboveLine, target }]);
+		observersOf(target)[1]?.trigger([
+			{ isIntersecting: topAboveLine, target },
+		]);
 
 	const callbacks = (name) => ({
 		onActivate: () => log.push(`${name} onActivate`),
@@ -4583,7 +4643,10 @@ describe('elements that reach the line without a pass on it', () => {
 			tick(observer);
 
 			expect(classes(element)).toEqual(['is-active']);
-			expect(values(element)).toEqual({ offset: '50', progress: '0.125' });
+			expect(values(element)).toEqual({
+				offset: '50',
+				progress: '0.125',
+			});
 			expect(log).toEqual(['a onActivate', 'a onScroll 50 0.125']);
 			expect(observer.getTotalCount()).toBe(0);
 			expect(observer.getActiveCount()).toBe(0);
@@ -4746,7 +4809,11 @@ describe('elements that reach the line without a pass on it', () => {
 			place(element, 100, 400);
 			observer.register(element, callbacks('a'));
 
-			expect(log).toEqual(['a onActivate', 'a onScroll 300 1', 'a onDeactivate']);
+			expect(log).toEqual([
+				'a onActivate',
+				'a onScroll 300 1',
+				'a onDeactivate',
+			]);
 			expect(observer.instances.get(element).state).toBe('passed');
 			expect(classes(element)).toEqual(['is-passed']);
 			expect(values(element)).toEqual({ offset: '300', progress: '1' });
@@ -4756,9 +4823,16 @@ describe('elements that reach the line without a pass on it', () => {
 
 		it('should ignore activateFrom at register()', () => {
 			place(element, 100, 400);
-			observer.register(element, { activateFrom: 'above', ...callbacks('a') });
+			observer.register(element, {
+				activateFrom: 'above',
+				...callbacks('a'),
+			});
 
-			expect(log).toEqual(['a onActivate', 'a onScroll 300 1', 'a onDeactivate']);
+			expect(log).toEqual([
+				'a onActivate',
+				'a onScroll 300 1',
+				'a onDeactivate',
+			]);
 		});
 
 		it('should do the same for an element skipped between two frames', () => {
@@ -4771,7 +4845,11 @@ describe('elements that reach the line without a pass on it', () => {
 			place(element, 460, 500);
 			tick(observer);
 
-			expect(log).toEqual(['a onActivate', 'a onScroll 40 1', 'a onDeactivate']);
+			expect(log).toEqual([
+				'a onActivate',
+				'a onScroll 40 1',
+				'a onDeactivate',
+			]);
 			expect(classes(element)).toEqual(['is-passed']);
 		});
 
@@ -4784,7 +4862,11 @@ describe('elements that reach the line without a pass on it', () => {
 			edge(element, true);
 			tick(observer);
 
-			expect(log).toEqual(['a onActivate', 'a onScroll 400 1', 'a onDeactivate']);
+			expect(log).toEqual([
+				'a onActivate',
+				'a onScroll 400 1',
+				'a onDeactivate',
+			]);
 			expect(classes(element)).toEqual(['is-passed']);
 		});
 
@@ -4796,7 +4878,11 @@ describe('elements that reach the line without a pass on it', () => {
 			edge(element, true);
 			tick(observer);
 
-			expect(log).toEqual(['a onActivate', 'a onScroll 40 1', 'a onDeactivate']);
+			expect(log).toEqual([
+				'a onActivate',
+				'a onScroll 40 1',
+				'a onDeactivate',
+			]);
 		});
 
 		it('should mirror it when an element goes straight from passed to inactive', () => {
@@ -4810,7 +4896,11 @@ describe('elements that reach the line without a pass on it', () => {
 			edge(element, false);
 			tick(observer);
 
-			expect(log).toEqual(['a onActivate', 'a onScroll 0 0', 'a onDeactivate']);
+			expect(log).toEqual([
+				'a onActivate',
+				'a onScroll 0 0',
+				'a onDeactivate',
+			]);
 			expect(observer.instances.get(element).state).toBe('inactive');
 			expect(classes(element)).toEqual([]);
 			expect(values(element)).toEqual({ offset: '0', progress: '0' });
@@ -4820,8 +4910,14 @@ describe('elements that reach the line without a pass on it', () => {
 			// Two 40px headings just below the line.
 			place(element, 560, 600);
 			place(other, 560, 600);
-			observer.register(element, { activateFrom: 'below', ...callbacks('below') });
-			observer.register(other, { activateFrom: 'above', ...callbacks('above') });
+			observer.register(element, {
+				activateFrom: 'below',
+				...callbacks('below'),
+			});
+			observer.register(other, {
+				activateFrom: 'above',
+				...callbacks('above'),
+			});
 			near(element);
 			near(other);
 			tick(observer);
@@ -4932,7 +5028,9 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 	let log;
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	// The IntersectionObservers watching an element, near one first.
@@ -5014,8 +5112,12 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 			};
 			watch(a, rects);
 			watch(b, rects);
-			first.register(a, { onActivate: () => log.push('write onActivate a') });
-			second.register(b, { onActivate: () => log.push('write onActivate b') });
+			first.register(a, {
+				onActivate: () => log.push('write onActivate a'),
+			});
+			second.register(b, {
+				onActivate: () => log.push('write onActivate b'),
+			});
 			report(first, a);
 			report(second, b);
 			frame();
@@ -5105,7 +5207,9 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 			second.destroy();
 			const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
 			const added = (type) =>
-				addEventListenerSpy.mock.calls.filter(([name]) => name === type);
+				addEventListenerSpy.mock.calls.filter(
+					([name]) => name === type
+				);
 
 			[1, 2, 3].forEach(() => new LineObserver());
 
@@ -5115,7 +5219,10 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 		});
 
 		it('should keep the listeners until the last observer is destroyed', () => {
-			const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener');
+			const removeEventListenerSpy = vi.spyOn(
+				window,
+				'removeEventListener'
+			);
 
 			first.destroy();
 			expect(removeEventListenerSpy).not.toHaveBeenCalled();
@@ -5126,8 +5233,14 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 			expect(second.getDirection()).toBe('up');
 
 			second.destroy();
-			expect(removeEventListenerSpy).toHaveBeenCalledWith('scroll', expect.any(Function));
-			expect(removeEventListenerSpy).toHaveBeenCalledWith('resize', expect.any(Function));
+			expect(removeEventListenerSpy).toHaveBeenCalledWith(
+				'scroll',
+				expect.any(Function)
+			);
+			expect(removeEventListenerSpy).toHaveBeenCalledWith(
+				'resize',
+				expect.any(Function)
+			);
 		});
 
 		it("should run every observer's resize reads before any observer's writes", () => {
@@ -5138,8 +5251,12 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 			};
 			watch(a, rects);
 			watch(b, rects);
-			first.register(a, { onActivate: () => log.push('write onActivate a') });
-			second.register(b, { onActivate: () => log.push('write onActivate b') });
+			first.register(a, {
+				onActivate: () => log.push('write onActivate a'),
+			});
+			second.register(b, {
+				onActivate: () => log.push('write onActivate b'),
+			});
 
 			// A taller viewport moves the lines to 700 and 420, across both.
 			Object.defineProperty(window, 'innerHeight', {
@@ -5263,11 +5380,15 @@ describe('one loop and shared IntersectionObservers for every LineObserver', () 
 
 			const [firstNear, , thirdNear] = observersOf(a);
 			expect(observersOf(a)).toHaveLength(4);
-			expect(firstNear.options.rootMargin).toBe(thirdNear.options.rootMargin);
+			expect(firstNear.options.rootMargin).toBe(
+				thirdNear.options.rootMargin
+			);
 
 			// `third` still observes it after `first` lets it go.
 			first.unregister(a);
-			expect(observersOf(a)).toEqual(MockIntersectionObserver.instances.slice(2));
+			expect(observersOf(a)).toEqual(
+				MockIntersectionObserver.instances.slice(2)
+			);
 			thirdNear.trigger([{ isIntersecting: true, target: a }]);
 			expect(third.nearInstances.size).toBe(1);
 		});
@@ -5280,7 +5401,9 @@ describe('a resize', () => {
 	let b;
 
 	const place = (element, top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	const setSize = (width, height) => {
@@ -5386,7 +5509,7 @@ describe('a resize', () => {
 			expect(onActivate).toHaveBeenCalledTimes(1);
 		});
 
-		it("should read an active element, whose height a reflow can change", () => {
+		it('should read an active element, whose height a reflow can change', () => {
 			const onScroll = vi.fn();
 			place(a, 300, 700);
 			observer.register(a, { onScroll });
@@ -5397,7 +5520,11 @@ describe('a resize', () => {
 			resizeTo(1200, 1000);
 
 			expect(observer.instances.get(a).progress).toBe(0.25);
-			expect(onScroll).toHaveBeenLastCalledWith(200, a, observer.instances.get(a));
+			expect(onScroll).toHaveBeenLastCalledWith(
+				200,
+				a,
+				observer.instances.get(a)
+			);
 		});
 
 		it('should give a px line new rootMargins on a height change, and read no inactive element', () => {
@@ -5411,7 +5538,9 @@ describe('a resize', () => {
 
 			const [newNear, newEdge] = observersOf(a);
 			expect(newNear).not.toBe(near);
-			expect(newEdge.options.rootMargin).toBe('10000000px 0px -600px 0px');
+			expect(newEdge.options.rootMargin).toBe(
+				'10000000px 0px -600px 0px'
+			);
 			expect(observer.instances.get(a).triggerLinePx).toBe(200);
 			expect(a.getBoundingClientRect).not.toHaveBeenCalled();
 		});
@@ -5428,7 +5557,9 @@ describe('a resize', () => {
 			// The line moves from 480 to 400, above `a`.
 			resizeTo(1600, 1000);
 
-			expect(MockIntersectionObserver.instances).toHaveLength(created + 2);
+			expect(MockIntersectionObserver.instances).toHaveLength(
+				created + 2
+			);
 			expect(observersOf(b)).toEqual(bObservers);
 			expect(observer.instances.get(a).triggerLinePx).toBe(400);
 			expect(observer.instances.get(a).state).toBe('inactive');
@@ -5514,7 +5645,9 @@ describe('option values', () => {
 	let warn;
 
 	const place = (top, bottom) => {
-		element.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
 	};
 
 	// The IntersectionObservers watching the element, near one first.
@@ -5542,15 +5675,21 @@ describe('option values', () => {
 		it('should take a nearMargin of digits as a number', () => {
 			observer.register(element, { nearMargin: '100' });
 
-			expect(observer.instances.get(element).options.nearMargin).toBe(100);
-			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect(observer.instances.get(element).options.nearMargin).toBe(
+				100
+			);
+			expect(observersOf(element)[0].options.rootMargin).toBe(
+				'-400px 0px -400px 0px'
+			);
 			expect(warnings()).toEqual([]);
 		});
 
 		it('should take a triggerLine with no unit as px', () => {
 			const other = document.createElement('div');
 			document.body.append(other);
-			other.getBoundingClientRect = vi.fn().mockReturnValue({ top: 1300, bottom: 1600 });
+			other.getBoundingClientRect = vi
+				.fn()
+				.mockReturnValue({ top: 1300, bottom: 1600 });
 
 			observer.register(element, { triggerLine: '200' });
 			observer.register(other, { triggerLine: '0' });
@@ -5580,7 +5719,9 @@ describe('option values', () => {
 			const { options, triggerLinePx } = observer.instances.get(element);
 			expect(options.nearMargin).toBe(100);
 			expect(triggerLinePx).toBe(500);
-			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
+			expect(observersOf(element)[0].options.rootMargin).toBe(
+				'-400px 0px -400px 0px'
+			);
 			expect([...element.classList]).toEqual(['is-active']);
 			expect(warnings()).toEqual([]);
 		});
@@ -5607,14 +5748,19 @@ describe('option values', () => {
 			['1.2.3vh', '1.2.3vh'],
 			['50 vh', '50 vh'],
 			['', ''],
-		])('should warn once and use the default for a triggerLine of %s', (label, triggerLine) => {
-			expect(() => observer.register(element, { triggerLine })).not.toThrow();
+		])(
+			'should warn once and use the default for a triggerLine of %s',
+			(label, triggerLine) => {
+				expect(() =>
+					observer.register(element, { triggerLine })
+				).not.toThrow();
 
-			expect(observer.instances.get(element).triggerLinePx).toBe(500);
-			expect(warnings()).toEqual([
-				`LineObserver: Invalid trigger line format "${triggerLine}", defaulting to 50vh`,
-			]);
-		});
+				expect(observer.instances.get(element).triggerLinePx).toBe(500);
+				expect(warnings()).toEqual([
+					`LineObserver: Invalid trigger line format "${triggerLine}", defaulting to 50vh`,
+				]);
+			}
+		);
 
 		it.each([
 			['-50', -50],
@@ -5624,15 +5770,24 @@ describe('option values', () => {
 			['abc', 'abc'],
 			['1e2', '1e2'],
 			['an empty string', ''],
-		])('should warn once and use the default for a nearMargin of %s', (label, nearMargin) => {
-			expect(() => observer.register(element, { nearMargin })).not.toThrow();
+		])(
+			'should warn once and use the default for a nearMargin of %s',
+			(label, nearMargin) => {
+				expect(() =>
+					observer.register(element, { nearMargin })
+				).not.toThrow();
 
-			expect(observer.instances.get(element).options.nearMargin).toBe(100);
-			expect(observersOf(element)[0].options.rootMargin).toBe('-400px 0px -400px 0px');
-			expect(warnings()).toEqual([
-				`LineObserver: Invalid nearMargin "${nearMargin}", defaulting to 100`,
-			]);
-		});
+				expect(observer.instances.get(element).options.nearMargin).toBe(
+					100
+				);
+				expect(observersOf(element)[0].options.rootMargin).toBe(
+					'-400px 0px -400px 0px'
+				);
+				expect(warnings()).toEqual([
+					`LineObserver: Invalid nearMargin "${nearMargin}", defaulting to 100`,
+				]);
+			}
+		);
 
 		it.each([
 			['activeClass', '', 'is-active'],
@@ -5640,22 +5795,35 @@ describe('option values', () => {
 			['activeClass', null, 'is-active'],
 			['passedClass', '', 'is-passed'],
 			['passedClass', 7, 'is-passed'],
-		])('should warn once and use the default for %s "%s"', (key, value, fallback) => {
-			// Past the line, so register() adds both classes in turn.
-			place(100, 400);
+		])(
+			'should warn once and use the default for %s "%s"',
+			(key, value, fallback) => {
+				// Past the line, so register() adds both classes in turn.
+				place(100, 400);
 
-			expect(() => observer.register(element, { [key]: value })).not.toThrow();
+				expect(() =>
+					observer.register(element, { [key]: value })
+				).not.toThrow();
 
-			expect(observer.instances.get(element).options[key]).toBe(fallback);
-			expect(warnings()).toEqual([
-				`LineObserver: Invalid ${key} "${value}", defaulting to "${fallback}"`,
-			]);
-		});
+				expect(observer.instances.get(element).options[key]).toBe(
+					fallback
+				);
+				expect(warnings()).toEqual([
+					`LineObserver: Invalid ${key} "${value}", defaulting to "${fallback}"`,
+				]);
+			}
+		);
 
 		it("should fall back to the observer's default, not the built-in one", () => {
-			const custom = new LineObserver({ nearMargin: 50, triggerLine: '30vh' });
+			const custom = new LineObserver({
+				nearMargin: 50,
+				triggerLine: '30vh',
+			});
 
-			custom.register(element, { nearMargin: 'wide', triggerLine: 'high' });
+			custom.register(element, {
+				nearMargin: 'wide',
+				triggerLine: 'high',
+			});
 
 			const { options, triggerLinePx } = custom.instances.get(element);
 			expect(options.nearMargin).toBe(50);
@@ -5665,9 +5833,14 @@ describe('option values', () => {
 		it('should warn once for an invalid constructor option, not once for each element', () => {
 			const other = document.createElement('div');
 			document.body.append(other);
-			other.getBoundingClientRect = vi.fn().mockReturnValue({ top: 1300, bottom: 1600 });
+			other.getBoundingClientRect = vi
+				.fn()
+				.mockReturnValue({ top: 1300, bottom: 1600 });
 
-			const custom = new LineObserver({ nearMargin: '-1', activeClass: '' });
+			const custom = new LineObserver({
+				nearMargin: '-1',
+				activeClass: '',
+			});
 			custom.register(element);
 			custom.register(other);
 
@@ -5684,7 +5857,387 @@ describe('option values', () => {
 		it('should still take null in place of options', () => {
 			expect(() => new LineObserver(null)).not.toThrow();
 			expect(() => observer.register(element, null)).not.toThrow();
-			expect(observer.instances.get(element).options.triggerLine).toBe('50vh');
+			expect(observer.instances.get(element).options.triggerLine).toBe(
+				'50vh'
+			);
 		});
+	});
+});
+
+describe('an error outside a callback', () => {
+	let first;
+	let second;
+	let a;
+	let b;
+
+	const place = (element, top, bottom) => {
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
+	};
+
+	const report = (observer, element) =>
+		observer.handleIntersection(
+			[{ isIntersecting: true }],
+			observer.instances.get(element)
+		);
+
+	beforeEach(() => {
+		// Both lines are at 500.
+		first = new LineObserver({ triggerLine: '50vh' });
+		second = new LineObserver({ triggerLine: '50vh' });
+		a = document.createElement('div');
+		b = document.createElement('div');
+		document.body.append(a, b);
+		window.reportError = vi.fn();
+	});
+
+	afterEach(() => {
+		a.remove();
+		b.remove();
+		delete window.reportError;
+	});
+
+	it("should keep the loop running for other observers when one observer's write throws", () => {
+		const error = new Error('no style');
+
+		// Both are near, below the line.
+		place(a, 550, 850);
+		place(b, 550, 850);
+		first.register(a);
+		second.register(b);
+		report(first, a);
+		report(second, b);
+		tick(first);
+
+		// Writing `a`'s values throws, as for an element with no `style`.
+		a.style.setProperty = () => {
+			throw error;
+		};
+
+		scrollWindowTo(100);
+		place(a, 450, 750);
+		place(b, 450, 750);
+		expect(() => frame()).not.toThrow();
+
+		expect(window.reportError).toHaveBeenCalledWith(error);
+		expect(second.instances.get(b).state).toBe('active');
+		expect(b.style.getPropertyValue('--scroll-offset')).toBe('50');
+
+		// The next frame still runs for `second`.
+		scrollWindowTo(150);
+		place(b, 400, 700);
+		frame();
+		expect(b.style.getPropertyValue('--scroll-offset')).toBe('100');
+	});
+
+	it('should stop an observer whose read throws until the page moves again', () => {
+		const error = new Error('read failed');
+
+		place(a, 550, 850);
+		first.register(a);
+		report(first, a);
+		tick(first);
+
+		a.getBoundingClientRect = vi.fn(() => {
+			throw error;
+		});
+		scrollWindowTo(100);
+		expect(() => frame()).not.toThrow();
+
+		expect(window.reportError).toHaveBeenCalledWith(error);
+		expect(first.isActive()).toBe(false);
+
+		// The page moves, and the read works again.
+		place(a, 400, 700);
+		scrollWindowTo(200);
+		frame();
+		expect(first.instances.get(a).state).toBe('active');
+	});
+});
+
+describe('an element hidden and shown again', () => {
+	let observer;
+	let element;
+	let log;
+
+	const place = (target, top, bottom) => {
+		target.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	// `display: none`: a rect of zeros and no client rects.
+	const hide = (target) => {
+		target.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: 0,
+			bottom: 0,
+			width: 0,
+			height: 0,
+		});
+		target.getClientRects = vi.fn().mockReturnValue([]);
+	};
+
+	// IO reports which side of the line the element's top edge is on.
+	const edge = (topAboveLine) =>
+		MockIntersectionObserver.instances
+			.filter((io) => io.observedElements.includes(element))[1]
+			.trigger([{ isIntersecting: topAboveLine, target: element }]);
+
+	beforeEach(() => {
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		element = document.createElement('div');
+		document.body.append(element);
+		log = [];
+	});
+
+	afterEach(() => {
+		element.remove();
+	});
+
+	const callbacks = {
+		onActivate: () => log.push('onActivate'),
+		onDeactivate: () => log.push('onDeactivate'),
+		onScroll: (offset) => log.push(`onScroll ${offset}`),
+	};
+
+	it('should keep a passed element passed, with no callbacks', () => {
+		place(element, 100, 200);
+		observer.register(element, callbacks);
+		expect(observer.instances.get(element).state).toBe('passed');
+		log = [];
+
+		hide(element);
+		edge(false);
+		tick(observer);
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect([...element.classList]).toEqual(['is-passed']);
+
+		place(element, 100, 200);
+		element.getClientRects = vi.fn().mockReturnValue([{}]);
+		edge(true);
+		tick(observer);
+
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect([...element.classList]).toEqual(['is-passed']);
+		expect(element.style.getPropertyValue('--scroll-progress')).toBe('1');
+		expect(log).toEqual([]);
+	});
+
+	it('should keep an active element active while it is hidden', () => {
+		place(element, 400, 700);
+		observer.register(element, callbacks);
+		log = [];
+
+		hide(element);
+		scrollWindowTo(100);
+		tick(observer);
+
+		expect(observer.instances.get(element).state).toBe('active');
+		expect(log).toEqual([]);
+	});
+
+	it('should read a box of zero size that has a client rect', () => {
+		// An empty marker 200px above the line.
+		element.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: 300,
+			bottom: 300,
+			width: 0,
+			height: 0,
+		});
+		element.getClientRects = vi.fn().mockReturnValue([{}]);
+		observer.register(element, callbacks);
+
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect(log).toEqual(['onActivate', 'onScroll 0', 'onDeactivate']);
+	});
+});
+
+describe('a bottom edge that crosses the line at rest', () => {
+	let observer;
+	let element;
+	let log;
+
+	const place = (top, bottom) => {
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
+	};
+
+	const observersOf = () =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(element)
+		);
+
+	// IO reports the element against the edge root, which ends at the line.
+	const edge = (isIntersecting, intersectionRatio) =>
+		observersOf()[1].trigger([
+			{ isIntersecting, intersectionRatio, target: element },
+		]);
+
+	const callbacks = {
+		onActivate: () => log.push('onActivate'),
+		onDeactivate: () => log.push('onDeactivate'),
+		onScroll: (offset) => log.push(`onScroll ${offset}`),
+	};
+
+	beforeEach(() => {
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh', nearMargin: 100 });
+		element = document.createElement('div');
+		document.body.append(element);
+		log = [];
+	});
+
+	afterEach(() => {
+		element.remove();
+	});
+
+	it('should watch the bottom edge with a threshold of 1', () => {
+		place(300, 550);
+		observer.register(element);
+
+		const [near, edgeObserver] = observersOf();
+		expect(near.options.threshold).toEqual([0]);
+		expect(edgeObserver.options.threshold).toEqual([0, 1]);
+	});
+
+	it('should deactivate an element whose bottom edge a layout change moved above the line', () => {
+		place(300, 550);
+		observer.register(element, callbacks);
+		expect(observer.instances.get(element).state).toBe('active');
+		frame();
+		frame();
+		frame();
+		expect(observer.isActive()).toBe(false);
+		log = [];
+
+		// Content above it shrinks by 100px. It stays in the near band, so
+		// only the edge observer reports it.
+		place(200, 450);
+		edge(true, 1);
+		frame();
+
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect([...element.classList]).toEqual(['is-passed']);
+		expect(element.style.getPropertyValue('--scroll-progress')).toBe('1');
+		expect(log).toEqual(['onScroll 250', 'onDeactivate']);
+	});
+
+	it('should activate a passed element whose bottom edge a layout change moved below the line', () => {
+		place(200, 450);
+		observer.register(element, callbacks);
+		expect(observer.instances.get(element).state).toBe('passed');
+		log = [];
+
+		place(300, 550);
+		edge(true, 0.8);
+		frame();
+
+		expect(observer.instances.get(element).state).toBe('active');
+		expect([...element.classList]).toEqual(['is-active']);
+		expect(log).toEqual(['onActivate', 'onScroll 200']);
+	});
+
+	it('should ask for no pass when the edges agree with the state', () => {
+		place(200, 450);
+		observer.register(element);
+		observer.reportedInstances.clear();
+
+		edge(true, 1);
+
+		expect(observer.reportedInstances.size).toBe(0);
+	});
+});
+
+describe('a resize while an element is detached', () => {
+	let observer;
+	let element;
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		// The line is at 500 on the 1920x1000 viewport.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		element = document.createElement('div');
+		document.body.append(element);
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top: 1300, bottom: 1600 });
+		observer.register(element);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		element.remove();
+	});
+
+	it('should give it the new line and rootMargins, without reading it', () => {
+		const instance = observer.instances.get(element);
+		const edgeMargin = instance.edge.rootMargin;
+
+		element.remove();
+		element.getBoundingClientRect.mockClear();
+
+		// A phone turns: the viewport is 400 tall, so the line is at 200.
+		Object.defineProperty(window, 'innerHeight', {
+			value: 400,
+			configurable: true,
+		});
+		window.dispatchEvent(new Event('resize'));
+		vi.advanceTimersByTime(200);
+
+		expect(instance.triggerLinePx).toBe(200);
+		expect(instance.edge.rootMargin).not.toBe(edgeMargin);
+		expect(instance.edge.rootMargin).toBe('10000000px 0px -200px 0px');
+		expect(element.getBoundingClientRect).not.toHaveBeenCalled();
+	});
+});
+
+describe('boolean options given as strings', () => {
+	let warn;
+
+	beforeEach(() => {
+		warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	it('should read "true" and "false" as booleans', () => {
+		const observer = new LineObserver({
+			once: 'false',
+			cssCustomProperty: 'false',
+		});
+
+		expect(observer.defaults.once).toBe(false);
+		expect(observer.defaults.cssCustomProperty).toBe(false);
+
+		const element = document.createElement('div');
+		document.body.append(element);
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top: 400, bottom: 700 });
+		observer.register(element, { once: 'true' });
+
+		// With `once`, an element active at register() keeps is-active and
+		// is let go.
+		expect([...element.classList]).toEqual(['is-active']);
+		expect(observer.instances.has(element)).toBe(false);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('');
+		expect(warn).not.toHaveBeenCalled();
+		element.remove();
+	});
+
+	it('should fall back to the default, with a warning, for any other string', () => {
+		const observer = new LineObserver({ once: 'yes' });
+
+		expect(observer.defaults.once).toBe(false);
+		expect(warn).toHaveBeenCalledWith(
+			'LineObserver: Invalid once "yes", defaulting to false'
+		);
+	});
+
+	it('should leave values that are not strings alone', () => {
+		const observer = new LineObserver({ once: true, cssCustomProperty: 0 });
+
+		expect(observer.defaults.once).toBe(true);
+		expect(observer.defaults.cssCustomProperty).toBe(0);
+		expect(warn).not.toHaveBeenCalled();
 	});
 });
