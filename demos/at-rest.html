@@ -59,7 +59,7 @@
 		const gap = document.getElementById('gap');
 
 		// Counts the work LineObserver does on A.
-		const count = { onScroll: 0, styleWrites: 0, rectReads: 0, onDeactivate: 0 };
+		const count = { onScroll: 0, styleWrites: 0, rectReads: 0, onActivate: 0, onDeactivate: 0 };
 
 		a.getBoundingClientRect = function () {
 			count.rectReads++;
@@ -86,7 +86,10 @@
 		const observer = new LineObserver({ triggerLine: '50vh' });
 
 		observer.register(a, {
-			onActivate: show,
+			onActivate: (element) => {
+				count.onActivate++;
+				show(element);
+			},
 			onDeactivate: (element) => {
 				count.onDeactivate++;
 				show(element);
@@ -120,6 +123,7 @@
 			count.onScroll = 0;
 			count.styleWrites = 0;
 			count.rectReads = 0;
+			count.onActivate = 0;
 			count.onDeactivate = 0;
 		};
 
@@ -156,6 +160,69 @@
 						actual: {
 							active: a.classList.contains('is-active'),
 							offset: offsetOf(a),
+							onDeactivate: count.onDeactivate,
+						},
+					};
+				},
+			},
+			{
+				name: 'Content above A shrinks 100px at rest: A\'s bottom edge rises past the line, inside the band',
+				run: async () => {
+					await jump(0);
+					await setHeights(100, 400);
+					// The line is 450px into A, 50px above its bottom edge.
+					await jump(lineInto(a, 450));
+					reset();
+					// A rises 100px. Its bottom edge ends 50px above the line,
+					// inside the band, and its top edge stays above it.
+					await setHeights(0, 400);
+					return {
+						expected: { active: false, passed: true, offset: 500, onDeactivate: 1 },
+						actual: {
+							active: a.classList.contains('is-active'),
+							passed: a.classList.contains('is-passed'),
+							offset: offsetOf(a),
+							onDeactivate: count.onDeactivate,
+						},
+					};
+				},
+			},
+			{
+				name: 'Content above A grows 100px at rest: A\'s bottom edge drops back below the line',
+				run: async () => {
+					await jump(0);
+					await setHeights(0, 400);
+					// The line is 550px into A, 50px below its bottom edge.
+					await jump(lineInto(a, 550));
+					reset();
+					await setHeights(100, 400);
+					return {
+						expected: { active: true, passed: false, offset: 450, onActivate: 1 },
+						actual: {
+							active: a.classList.contains('is-active'),
+							passed: a.classList.contains('is-passed'),
+							offset: offsetOf(a),
+							onActivate: count.onActivate,
+						},
+					};
+				},
+			},
+			{
+				name: 'A, past the line, is hidden and shown again: no callbacks',
+				run: async () => {
+					await jump(0);
+					await setHeights(0, 400);
+					await jump(lineInto(a, 700));
+					reset();
+					a.style.display = 'none';
+					await waitFrames();
+					a.style.display = '';
+					await waitFrames();
+					return {
+						expected: { passed: true, onActivate: 0, onDeactivate: 0 },
+						actual: {
+							passed: a.classList.contains('is-passed'),
+							onActivate: count.onActivate,
 							onDeactivate: count.onDeactivate,
 						},
 					};
