@@ -76,6 +76,41 @@ const toNumber = (value) => {
 };
 
 /**
+ * Reports an error without throwing it.
+ *
+ * `reportError()` fires the window `error` event, as an uncaught error
+ * does, so error trackers still see it.
+ *
+ * @param {*} error - The error.
+ */
+const report = (error) => {
+	if (typeof window.reportError === 'function') {
+		window.reportError(error);
+	} else {
+		console.error(error);
+	}
+};
+
+/**
+ * Runs `step`, and reports an error it throws.
+ *
+ * @param {Function} step      - The work.
+ * @param {Function} [onError] - Runs after an error is reported.
+ * @return {*} What `step` returns, or undefined if it threw.
+ */
+const guarded = (step, onError) => {
+	try {
+		return step();
+	} catch (error) {
+		report(error);
+		if (onError) {
+			onError();
+		}
+		return undefined;
+	}
+};
+
+/**
  * Runs one RAF loop, one scroll listener and one resize listener for every LineObserver.
  *
  * Each frame runs every observer's reads, then every observer's writes, so
@@ -162,6 +197,12 @@ class Scheduler {
 
 	/**
 	 * Runs every running observer's reads, then their writes, and requests the next frame while any still runs.
+	 *
+	 * Each observer's read and write is guarded. An error outside a callback
+	 * would otherwise leave this frame before it requests the next one, and
+	 * every observer on the page would keep `isRunning` true with no frame
+	 * to run in. An observer whose read throws stops until the page next
+	 * moves, so a read that throws every time does not run every frame.
 	 */
 	frame() {
 		this.rafId = null;
@@ -171,7 +212,12 @@ class Scheduler {
 
 		for (const observer of this.observers) {
 			if (observer.isRunning) {
-				const changes = observer._readFrame(scrollY);
+				const changes = guarded(
+					() => observer._readFrame(scrollY),
+					() => {
+						observer.isRunning = false;
+					}
+				);
 				if (changes) {
 					passes.push([observer, changes]);
 				}
@@ -179,7 +225,7 @@ class Scheduler {
 		}
 
 		for (const [observer, changes] of passes) {
-			observer._apply(changes);
+			guarded(() => observer._apply(changes));
 		}
 
 		// A callback can start, stop or destroy any observer.
@@ -213,11 +259,13 @@ class Scheduler {
 
 			const passes = [...this.observers].map((observer) => [
 				observer,
-				observer._readResize(),
+				guarded(() => observer._readResize()),
 			]);
 
 			for (const [observer, changes] of passes) {
-				observer._apply(changes);
+				if (changes) {
+					guarded(() => observer._apply(changes));
+				}
 			}
 		}, 150);
 	}
@@ -697,8 +745,6 @@ class LineObserver {
 	 * `startLoop()` never requests one for them again. The error would also
 	 * skip the rest of the frame, the rest of a resize pass, and the rest of
 	 * a caller's loop over `register()`.
-	 * `reportError()` fires the window `error` event, as an uncaught error
-	 * does, so error trackers still see it.
 	 *
 	 * @param {Object} options - The element's merged options.
 	 * @param {string} name    - The callback's option name.
@@ -710,15 +756,7 @@ class LineObserver {
 			return;
 		}
 
-		try {
-			options[name](...args);
-		} catch (error) {
-			if (typeof window.reportError === 'function') {
-				window.reportError(error);
-			} else {
-				console.error(error);
-			}
-		}
+		guarded(() => options[name](...args));
 	}
 
 	/**
