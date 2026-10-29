@@ -1317,11 +1317,11 @@ class LineObserver {
 	 * Like `_readFrame()`, it writes nothing to the DOM. `_apply()` writes the
 	 * changes.
 	 *
-	 * An element is read if its line moved, or if it is active or near the
-	 * line. A resize can reflow the page and move an element's bottom edge
-	 * across the line inside the band, where neither IntersectionObserver
-	 * reports it. Any other element a reflow moves across the line or the
-	 * band gets an IO report.
+	 * Every element gets its new line and rootMargins, a detached one too, so
+	 * it has them when it is attached again. A connected element is read if
+	 * its line moved, or if it is active or near the line, so a reflow that
+	 * moves it across the line is handled in this pass. Any other element a
+	 * reflow moves across the line or the band gets an IO report.
 	 *
 	 * `activateFrom` filters these transitions by the direction of the last
 	 * scroll, so an element it holds active stays held. On a phone, the
@@ -1344,10 +1344,6 @@ class LineObserver {
 		const changes = [];
 
 		for (const instance of this.instances.values()) {
-			if (!instance.element.isConnected) {
-				continue;
-			}
-
 			const line = this.parseTriggerLine(instance.options.triggerLine);
 			const moved = line !== instance.triggerLinePx;
 
@@ -1355,6 +1351,10 @@ class LineObserver {
 			// line, so a px line that stays put can still need new ones.
 			instance.triggerLinePx = line;
 			this._observe(instance);
+
+			if (!instance.element.isConnected) {
+				continue;
+			}
 
 			if (
 				moved ||

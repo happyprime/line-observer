@@ -6148,3 +6148,46 @@ describe('a bottom edge that crosses the line at rest', () => {
 		expect(observer.reportedInstances.size).toBe(0);
 	});
 });
+
+describe('a resize while an element is detached', () => {
+	let observer;
+	let element;
+
+	beforeEach(() => {
+		vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+		// The line is at 500 on the 1920x1000 viewport.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		element = document.createElement('div');
+		document.body.append(element);
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top: 1300, bottom: 1600 });
+		observer.register(element);
+	});
+
+	afterEach(() => {
+		vi.useRealTimers();
+		element.remove();
+	});
+
+	it('should give it the new line and rootMargins, without reading it', () => {
+		const instance = observer.instances.get(element);
+		const edgeMargin = instance.edge.rootMargin;
+
+		element.remove();
+		element.getBoundingClientRect.mockClear();
+
+		// A phone turns: the viewport is 400 tall, so the line is at 200.
+		Object.defineProperty(window, 'innerHeight', {
+			value: 400,
+			configurable: true,
+		});
+		window.dispatchEvent(new Event('resize'));
+		vi.advanceTimersByTime(200);
+
+		expect(instance.triggerLinePx).toBe(200);
+		expect(instance.edge.rootMargin).not.toBe(edgeMargin);
+		expect(instance.edge.rootMargin).toBe('10000000px 0px -200px 0px');
+		expect(element.getBoundingClientRect).not.toHaveBeenCalled();
+	});
+});
