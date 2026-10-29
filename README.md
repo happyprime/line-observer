@@ -547,7 +547,7 @@ While an element is `'passed'` it has the `passedClass`, `is-passed` by default.
 }
 ```
 
-An element with no box, such as one with `display: none`, counts as `'inactive'`.
+An element with no box, such as one with `display: none`, keeps the state it had, so hiding it and showing it again fires no callbacks. One registered while it has no box starts `'inactive'`, and is read when it gets one. An empty element of zero size still has a box, and is read like any other. An element removed from the page counts as `'inactive'`.
 
 ### Supported units
 

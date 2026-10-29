@@ -5955,3 +5955,99 @@ describe('an error outside a callback', () => {
 		expect(first.instances.get(a).state).toBe('active');
 	});
 });
+
+describe('an element hidden and shown again', () => {
+	let observer;
+	let element;
+	let log;
+
+	const place = (target, top, bottom) => {
+		target.getBoundingClientRect = vi.fn().mockReturnValue({ top, bottom });
+	};
+
+	// `display: none`: a rect of zeros and no client rects.
+	const hide = (target) => {
+		target.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: 0,
+			bottom: 0,
+			width: 0,
+			height: 0,
+		});
+		target.getClientRects = vi.fn().mockReturnValue([]);
+	};
+
+	// IO reports which side of the line the element's top edge is on.
+	const edge = (topAboveLine) =>
+		MockIntersectionObserver.instances
+			.filter((io) => io.observedElements.includes(element))[1]
+			.trigger([{ isIntersecting: topAboveLine, target: element }]);
+
+	beforeEach(() => {
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh' });
+		element = document.createElement('div');
+		document.body.append(element);
+		log = [];
+	});
+
+	afterEach(() => {
+		element.remove();
+	});
+
+	const callbacks = {
+		onActivate: () => log.push('onActivate'),
+		onDeactivate: () => log.push('onDeactivate'),
+		onScroll: (offset) => log.push(`onScroll ${offset}`),
+	};
+
+	it('should keep a passed element passed, with no callbacks', () => {
+		place(element, 100, 200);
+		observer.register(element, callbacks);
+		expect(observer.instances.get(element).state).toBe('passed');
+		log = [];
+
+		hide(element);
+		edge(false);
+		tick(observer);
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect([...element.classList]).toEqual(['is-passed']);
+
+		place(element, 100, 200);
+		element.getClientRects = vi.fn().mockReturnValue([{}]);
+		edge(true);
+		tick(observer);
+
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect([...element.classList]).toEqual(['is-passed']);
+		expect(element.style.getPropertyValue('--scroll-progress')).toBe('1');
+		expect(log).toEqual([]);
+	});
+
+	it('should keep an active element active while it is hidden', () => {
+		place(element, 400, 700);
+		observer.register(element, callbacks);
+		log = [];
+
+		hide(element);
+		scrollWindowTo(100);
+		tick(observer);
+
+		expect(observer.instances.get(element).state).toBe('active');
+		expect(log).toEqual([]);
+	});
+
+	it('should read a box of zero size that has a client rect', () => {
+		// An empty marker 200px above the line.
+		element.getBoundingClientRect = vi.fn().mockReturnValue({
+			top: 300,
+			bottom: 300,
+			width: 0,
+			height: 0,
+		});
+		element.getClientRects = vi.fn().mockReturnValue([{}]);
+		observer.register(element, callbacks);
+
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect(log).toEqual(['onActivate', 'onScroll 0', 'onDeactivate']);
+	});
+});

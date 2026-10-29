@@ -1041,8 +1041,20 @@ class LineObserver {
 			: null;
 
 		// An element with no box, such as one with `display: none`, has a
-		// rect of zeros, which reads as past the line. It counts as inactive.
-		if (rect && (rect.width !== 0 || rect.height !== 0)) {
+		// rect of zeros, which reads as past the line. It keeps its state:
+		// hiding an element and showing it again does not move it across
+		// the line. A box of zero size, such as an empty marker, still has
+		// a client rect, so it is read.
+		if (
+			rect &&
+			rect.width === 0 &&
+			rect.height === 0 &&
+			element.getClientRects().length === 0
+		) {
+			return null;
+		}
+
+		if (rect) {
 			to = this._determineState(rect, instance.triggerLinePx);
 
 			if (to !== from) {
