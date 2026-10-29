@@ -373,7 +373,7 @@ document.querySelectorAll('.wp-block-theme-callout').forEach((element) => {
 });
 ```
 
-Read a boolean from whether the attribute is there. `element.dataset.once` is a string: `'false'` is truthy and would turn `once` on, and the empty string from a bare `data-once` is falsy and would turn it off. Write `data-once` into the markup only when the option is on.
+Read a boolean from whether the attribute is there. `element.dataset.once` is a string. `'true'` and `'false'` are read as booleans, but the empty string from a bare `data-once` is neither, so it logs a warning and leaves `once` off. Write `data-once` into the markup only when the option is on.
 
 ## Upgrading from 0.0.1
 
@@ -426,7 +426,7 @@ const observer = new LineObserver({
 | `onDeactivate` | `function \| null` | `null` | Called when an element leaves the active zone. Receives `(element, instance)`. |
 | `onScroll` | `function \| null` | `null` | Called when the element activates, in each frame in which an active element's offset or progress changes, and once more with the value it holds when it leaves the active zone, before `onDeactivate`, or crosses the line without activating. Receives `(offset, element, instance)`. |
 
-Options often come from data attributes, as strings, so a string of digits counts as a number: `nearMargin: '100'` is `100`. An option set to `undefined`, as from a missing attribute, keeps its default. An invalid value, such as a negative `nearMargin`, a `triggerLine` of `'1.2.3vh'` or an empty `activeClass`, logs one warning and falls back to the default: the constructor's for an option given to `register()`, or the built-in one for an option given to the constructor.
+Options often come from data attributes, as strings, so a string of digits counts as a number: `nearMargin: '100'` is `100`, and `'true'` and `'false'` count as booleans for `once` and `cssCustomProperty`. An option set to `undefined`, as from a missing attribute, keeps its default. An invalid value, such as a negative `nearMargin`, a `triggerLine` of `'1.2.3vh'` or an empty `activeClass`, logs one warning and falls back to the default: the constructor's for an option given to `register()`, or the built-in one for an option given to the constructor.
 
 ## Methods
 

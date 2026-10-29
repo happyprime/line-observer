@@ -383,8 +383,10 @@ class LineObserver {
 	 *
 	 * Options often come from data attributes, as strings. A string of
 	 * digits is a number: `nearMargin: '100'` is 100, and a `triggerLine` of
-	 * `'200'` is 200px. An `undefined` value, as from a missing attribute,
-	 * leaves the default in place.
+	 * `'200'` is 200px. `'true'` and `'false'` are booleans for `once` and
+	 * `cssCustomProperty`, which would otherwise read `'false'` as true. An
+	 * `undefined` value, as from a missing attribute, leaves the default in
+	 * place.
 	 *
 	 * @param {Object} options  - The options given.
 	 * @param {Object} defaults - The values to fall back on.
@@ -437,6 +439,21 @@ class LineObserver {
 				fallBack(
 					key,
 					`Invalid ${key} "${checked[key]}", defaulting to "${defaults[key]}"`
+				);
+			}
+		}
+
+		for (const key of ['once', 'cssCustomProperty']) {
+			if (typeof checked[key] !== 'string') {
+				continue;
+			}
+
+			if (checked[key] === 'true' || checked[key] === 'false') {
+				checked[key] = checked[key] === 'true';
+			} else {
+				fallBack(
+					key,
+					`Invalid ${key} "${checked[key]}", defaulting to ${defaults[key]}`
 				);
 			}
 		}

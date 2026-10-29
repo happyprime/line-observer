@@ -6191,3 +6191,53 @@ describe('a resize while an element is detached', () => {
 		expect(element.getBoundingClientRect).not.toHaveBeenCalled();
 	});
 });
+
+describe('boolean options given as strings', () => {
+	let warn;
+
+	beforeEach(() => {
+		warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+	});
+
+	it('should read "true" and "false" as booleans', () => {
+		const observer = new LineObserver({
+			once: 'false',
+			cssCustomProperty: 'false',
+		});
+
+		expect(observer.defaults.once).toBe(false);
+		expect(observer.defaults.cssCustomProperty).toBe(false);
+
+		const element = document.createElement('div');
+		document.body.append(element);
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top: 400, bottom: 700 });
+		observer.register(element, { once: 'true' });
+
+		// With `once`, an element active at register() keeps is-active and
+		// is let go.
+		expect([...element.classList]).toEqual(['is-active']);
+		expect(observer.instances.has(element)).toBe(false);
+		expect(element.style.getPropertyValue('--scroll-offset')).toBe('');
+		expect(warn).not.toHaveBeenCalled();
+		element.remove();
+	});
+
+	it('should fall back to the default, with a warning, for any other string', () => {
+		const observer = new LineObserver({ once: 'yes' });
+
+		expect(observer.defaults.once).toBe(false);
+		expect(warn).toHaveBeenCalledWith(
+			'LineObserver: Invalid once "yes", defaulting to false'
+		);
+	});
+
+	it('should leave values that are not strings alone', () => {
+		const observer = new LineObserver({ once: true, cssCustomProperty: 0 });
+
+		expect(observer.defaults.once).toBe(true);
+		expect(observer.defaults.cssCustomProperty).toBe(0);
+		expect(warn).not.toHaveBeenCalled();
+	});
+});
