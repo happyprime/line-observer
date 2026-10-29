@@ -522,18 +522,22 @@ class LineObserver {
 	 * @private
 	 */
 	_observe(instance) {
-		for (const [key, observers, rootMargin, handle] of [
+		for (const [key, observers, rootMargin, handle, threshold] of [
 			[
 				'near',
 				this.nearObservers,
 				this._nearRootMargin(instance),
 				this.handleIntersection,
+				[0],
 			],
 			[
 				'edge',
 				this.edgeObservers,
 				this._edgeRootMargin(instance),
 				this.handleEdgeIntersection,
+				// 1 too: the whole element above the line is its bottom edge
+				// crossing it.
+				[0, 1],
 			],
 		]) {
 			const current = instance[key];
@@ -544,7 +548,13 @@ class LineObserver {
 			if (current) {
 				this._leave(observers, current, instance.element);
 			}
-			instance[key] = this._join(observers, rootMargin, handle, instance);
+			instance[key] = this._join(
+				observers,
+				rootMargin,
+				handle,
+				threshold,
+				instance
+			);
 		}
 	}
 
@@ -588,12 +598,13 @@ class LineObserver {
 	 * @param {Map}      observers  - The near or edge observers, by rootMargin.
 	 * @param {string}   rootMargin - The rootMargin.
 	 * @param {Function} handle     - The handler for one instance's entries.
+	 * @param {number[]} threshold  - The IntersectionObserver's thresholds.
 	 * @param {Object}   instance   - The observer instance.
 	 * @return {Object} `{ observer, rootMargin, instances }`, where
 	 *                  `instances` maps each element to its instance.
 	 * @private
 	 */
-	_join(observers, rootMargin, handle, instance) {
+	_join(observers, rootMargin, handle, threshold, instance) {
 		let shared = observers.get(rootMargin);
 
 		if (!shared) {
@@ -613,7 +624,7 @@ class LineObserver {
 						}
 					}
 				},
-				{ rootMargin, threshold: [0] }
+				{ rootMargin, threshold }
 			);
 
 			shared = { observer, rootMargin, instances };
@@ -664,13 +675,14 @@ class LineObserver {
 	}
 
 	/**
-	 * Returns the rootMargin of an IntersectionObserver that reports each time the element's top edge crosses the trigger line.
+	 * Returns the rootMargin of an IntersectionObserver that reports each time the element's top or bottom edge crosses the trigger line.
 	 *
 	 * The root reaches from `EDGE_REACH` above the viewport down to the
 	 * trigger line, so the element intersects it while its top edge is above
-	 * the line. A jump can take an element across the line without it
-	 * entering the near band, and a layout change can move one across with
-	 * the page at rest. This observer reports both.
+	 * the line, and lies wholly inside it while its bottom edge is too. A
+	 * jump can take an element across the line without it entering the near
+	 * band, and a layout change can move either edge across with the page at
+	 * rest, inside the band or out of it. This observer reports all of them.
 	 *
 	 * @param {Object} instance - The observer instance.
 	 * @return {string} The rootMargin.
@@ -683,10 +695,14 @@ class LineObserver {
 	}
 
 	/**
-	 * Asks for a pass when the element's top edge is on the other side of the line from where its state says.
+	 * Asks for a pass when either of the element's edges is on the other side of the line from where its state says.
 	 *
 	 * IO reports every element when it starts observing it, and the state
 	 * already agrees for most of them, so those reports ask for nothing.
+	 *
+	 * The top edge is above the line while the element intersects the root,
+	 * and the bottom edge is too while all of it does. An entry with no
+	 * `intersectionRatio` is read for its top edge only.
 	 *
 	 * @param {IntersectionObserverEntry[]} entries  - Entries for the instance's element.
 	 * @param {Object}                      instance - The observer instance associated with the intersection.
@@ -697,9 +713,15 @@ class LineObserver {
 			return;
 		}
 
-		const topAboveLine = entries[entries.length - 1].isIntersecting;
+		const { isIntersecting: topAboveLine, intersectionRatio } =
+			entries[entries.length - 1];
+		const topDisagrees = topAboveLine !== (instance.state !== 'inactive');
+		const bottomDisagrees =
+			topAboveLine &&
+			typeof intersectionRatio === 'number' &&
+			intersectionRatio >= 1 !== (instance.state === 'passed');
 
-		if (topAboveLine !== (instance.state !== 'inactive')) {
+		if (topDisagrees || bottomDisagrees) {
 			this.reportedInstances.add(instance);
 			this.startLoop();
 		}

@@ -6051,3 +6051,100 @@ describe('an element hidden and shown again', () => {
 		expect(log).toEqual(['onActivate', 'onScroll 0', 'onDeactivate']);
 	});
 });
+
+describe('a bottom edge that crosses the line at rest', () => {
+	let observer;
+	let element;
+	let log;
+
+	const place = (top, bottom) => {
+		element.getBoundingClientRect = vi
+			.fn()
+			.mockReturnValue({ top, bottom });
+	};
+
+	const observersOf = () =>
+		MockIntersectionObserver.instances.filter((io) =>
+			io.observedElements.includes(element)
+		);
+
+	// IO reports the element against the edge root, which ends at the line.
+	const edge = (isIntersecting, intersectionRatio) =>
+		observersOf()[1].trigger([
+			{ isIntersecting, intersectionRatio, target: element },
+		]);
+
+	const callbacks = {
+		onActivate: () => log.push('onActivate'),
+		onDeactivate: () => log.push('onDeactivate'),
+		onScroll: (offset) => log.push(`onScroll ${offset}`),
+	};
+
+	beforeEach(() => {
+		// The line is at 500.
+		observer = new LineObserver({ triggerLine: '50vh', nearMargin: 100 });
+		element = document.createElement('div');
+		document.body.append(element);
+		log = [];
+	});
+
+	afterEach(() => {
+		element.remove();
+	});
+
+	it('should watch the bottom edge with a threshold of 1', () => {
+		place(300, 550);
+		observer.register(element);
+
+		const [near, edgeObserver] = observersOf();
+		expect(near.options.threshold).toEqual([0]);
+		expect(edgeObserver.options.threshold).toEqual([0, 1]);
+	});
+
+	it('should deactivate an element whose bottom edge a layout change moved above the line', () => {
+		place(300, 550);
+		observer.register(element, callbacks);
+		expect(observer.instances.get(element).state).toBe('active');
+		frame();
+		frame();
+		frame();
+		expect(observer.isActive()).toBe(false);
+		log = [];
+
+		// Content above it shrinks by 100px. It stays in the near band, so
+		// only the edge observer reports it.
+		place(200, 450);
+		edge(true, 1);
+		frame();
+
+		expect(observer.instances.get(element).state).toBe('passed');
+		expect([...element.classList]).toEqual(['is-passed']);
+		expect(element.style.getPropertyValue('--scroll-progress')).toBe('1');
+		expect(log).toEqual(['onScroll 250', 'onDeactivate']);
+	});
+
+	it('should activate a passed element whose bottom edge a layout change moved below the line', () => {
+		place(200, 450);
+		observer.register(element, callbacks);
+		expect(observer.instances.get(element).state).toBe('passed');
+		log = [];
+
+		place(300, 550);
+		edge(true, 0.8);
+		frame();
+
+		expect(observer.instances.get(element).state).toBe('active');
+		expect([...element.classList]).toEqual(['is-active']);
+		expect(log).toEqual(['onActivate', 'onScroll 200']);
+	});
+
+	it('should ask for no pass when the edges agree with the state', () => {
+		place(200, 450);
+		observer.register(element);
+		observer.reportedInstances.clear();
+
+		edge(true, 1);
+
+		expect(observer.reportedInstances.size).toBe(0);
+	});
+});
